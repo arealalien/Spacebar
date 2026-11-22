@@ -1097,6 +1097,7 @@ pub fn run(dock_only: bool) {
         .manage(WidgetPopup::default())
         .manage(Telemetry::default())
         .manage(system_widgets::audio_spectrum::AudioSpectrum::default())
+        .manage(system_widgets::spotify_meter::SpotifyMeter::default())
         .manage(WidgetDrag::default())
         .manage(OpenFolder::default())
         .manage(Placement::default())
@@ -1184,6 +1185,8 @@ pub fn run(dock_only: bool) {
             crate::updates::install_update,
             dock_config::read_settings,
             dock_config::write_settings,
+            dock_config::read_app_appearance,
+            dock_config::write_app_appearance,
             dock_config::read_saved_docks,
             dock_config::edit_saved_docks,
             apps::list_dock_apps,
@@ -1240,6 +1243,7 @@ pub fn run(dock_only: bool) {
             telemetry::system_snapshot,
             system_widgets::audio_snapshot,
             system_widgets::audio_spectrum::audio_output_spectrum,
+            system_widgets::spotify_meter::spotify_output_peak,
             system_widgets::audio_devices,
             system_widgets::select_audio_device,
             connectivity::wifi_networks,

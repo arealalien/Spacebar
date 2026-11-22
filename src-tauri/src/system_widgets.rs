@@ -25,6 +25,7 @@ use windows_sys::Win32::UI::{
 };
 
 pub(crate) mod audio_spectrum;
+pub(crate) mod spotify_meter;
 
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]

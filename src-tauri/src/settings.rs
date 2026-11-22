@@ -94,6 +94,44 @@ enum Accent {
     Light,
 }
 
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum AppTheme {
+    Light,
+    Dark,
+    #[default]
+    #[serde(other)]
+    System,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(transparent)]
+struct AppAppearancePercent(u8);
+
+impl Default for AppAppearancePercent {
+    fn default() -> Self {
+        Self(100)
+    }
+}
+
+impl<'de> Deserialize<'de> for AppAppearancePercent {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        Ok(value.as_f64().map_or_else(Self::default, |amount| {
+            Self(amount.round().clamp(0.0, 100.0) as u8)
+        }))
+    }
+}
+
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+pub(crate) struct AppAppearance {
+    theme: AppTheme,
+    tint_color: TintColor,
+    blur_amount: AppAppearancePercent,
+    tint_amount: AppAppearancePercent,
+}
+
 #[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 enum RevealAnimation {
@@ -222,6 +260,25 @@ impl Default for Settings {
 }
 
 impl Settings {
+    pub(crate) fn legacy_app_appearance(self) -> AppAppearance {
+        let (theme, tint) = match self.accent {
+            Accent::Red => (AppTheme::System, [239, 102, 108]),
+            Accent::Orange => (AppTheme::System, [248, 155, 94]),
+            Accent::Yellow => (AppTheme::System, [242, 204, 96]),
+            Accent::Green => (AppTheme::System, [121, 220, 176]),
+            Accent::Blue => (AppTheme::System, [131, 186, 255]),
+            Accent::Purple => return AppAppearance::default(),
+            Accent::Pink => (AppTheme::System, [237, 152, 192]),
+            Accent::Dark => (AppTheme::Dark, [52, 54, 61]),
+            Accent::Light => (AppTheme::Light, [232, 233, 237]),
+        };
+        AppAppearance {
+            theme,
+            tint_color: TintColor(tint),
+            ..AppAppearance::default()
+        }
+    }
+
     pub(crate) fn normalized(mut self) -> Self {
         self.icon_size = self.icon_size.clamp(20, 80);
         self.spacing = self.spacing.min(32);
@@ -249,6 +306,40 @@ pub fn save_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn appearance_amounts_default_for_older_preferences_and_stay_in_range() {
+        let mut stored = serde_json::json!({"theme": "dark", "tintColor": "#52a1cf"});
+        let older: AppAppearance = serde_json::from_value(stored.clone()).unwrap();
+        assert_eq!(older.blur_amount.0, 100);
+        assert_eq!(older.tint_amount.0, 100);
+
+        stored["blurAmount"] = serde_json::json!(67);
+        let older: AppAppearance = serde_json::from_value(stored.clone()).unwrap();
+        assert_eq!(older.blur_amount.0, 67);
+        assert_eq!(older.tint_amount.0, 100);
+
+        for (input, expected) in [
+            (serde_json::json!(-3), 0),
+            (serde_json::json!(0), 0),
+            (serde_json::json!(74.6), 75),
+            (serde_json::json!(130), 100),
+            (serde_json::json!("invalid"), 100),
+        ] {
+            stored["blurAmount"] = input.clone();
+            stored["tintAmount"] = input;
+            let appearance: AppAppearance = serde_json::from_value(stored.clone()).unwrap();
+            assert_eq!(
+                serde_json::to_value(appearance).unwrap(),
+                serde_json::json!({
+                    "theme": "dark",
+                    "tintColor": "#52a1cf",
+                    "blurAmount": expected,
+                    "tintAmount": expected,
+                })
+            );
+        }
+    }
 
     #[test]
     fn upgrades_old_glass_and_keeps_other_preferences() {

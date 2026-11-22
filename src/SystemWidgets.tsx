@@ -1,9 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
-import { ArrowDown, ArrowUp, AudioLines, Bell, Camera, ChevronRight, ChevronUp, Cpu, Crop, HardDrive, Keyboard, MemoryStick, Mic, MicOff, Monitor, Moon, Scan, SlidersHorizontal, Sun, Volume2, VolumeX, type LucideIcon } from 'lucide-react';
+import { Activity, ArrowDown, ArrowUp, AudioLines, Bell, Camera, ChevronRight, ChevronUp, Cpu, Crop, HardDrive, Keyboard, MemoryStick, Mic, MicOff, Monitor, Moon, Scan, SlidersHorizontal, Sun, Volume2, VolumeX, Wifi, type LucideIcon } from 'lucide-react';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { widgetSnapshot } from './widgetSnapshots';
 import { dockPopupAnchor } from './widgets';
 import type { ClockKind, SpotifyKind, WidgetKind } from './widgetCatalog';
+import { smoothLine } from './widgetGraph';
 
 type SystemKind = Exclude<WidgetKind, 'apps' | 'start' | 'spacebar-start' | 'folder' | ClockKind | SpotifyKind>;
 type Device = 'output' | 'input';
@@ -23,6 +24,18 @@ let audioQueue = Promise.resolve();
 const monitorKinds = ['cpu', 'ram', 'gpu', 'performance', 'system-rings', 'network', 'network-usage', 'storage'] as const;
 type MonitorKind = typeof monitorKinds[number];
 
+const previewHistory: [number, number][] = [
+  [180, 75], [380, 140], [740, 110], [520, 210], [1050, 310],
+  [880, 180], [410, 90], [730, 245], [1480, 410], [1120, 235],
+].map(([download, upload]) => [download * 1024, upload * 1024]);
+const gib = 1024 ** 3;
+const previewTelemetry: Telemetry = {
+  cpu: 28, gpu: 16,
+  ram: { total: 32 * gib, available: 19 * gib },
+  disk: { total: 512 * gib, available: 184 * gib },
+  network: { received: 356 * 1024 ** 2, sent: 42 * 1024 ** 2, rates: previewHistory.at(-1) ?? null, history: previewHistory },
+};
+
 const percent = (value: number | null | undefined) => value == null ? '—' : Math.round(value).toString();
 const used = (value: Capacity | null | undefined) => value?.total ? 100 * (1 - value.available / value.total) : undefined;
 
@@ -37,10 +50,12 @@ const meterIcons = { cpu: Cpu, ram: MemoryStick, gpu: Monitor };
 function Gauge({ kind, value, paired = false }: { kind: keyof typeof meterIcons; value: number | null | undefined; paired?: boolean }) {
   const Icon = meterIcons[kind];
   const label = kind.toUpperCase();
-  return <div className={`${paired ? 'gauge-face' : 'widget-face gauge-face'} gauge-${kind}`} title={label + ' usage: ' + percent(value) + (value == null ? '' : '%')}>
+  const description = label + ' usage: ' + (value == null ? 'Unavailable' : percent(value) + '%');
+  return <div className={`${paired ? 'gauge-face' : 'widget-face gauge-face'} gauge-${kind}`} role="img" aria-label={description} title={description}>
     <svg viewBox="0 0 44 44" aria-hidden="true">
       <circle className="gauge-track" cx="22" cy="22" r="19" />
-      <circle className="gauge-progress" cx="22" cy="22" r="19" pathLength="100" strokeDasharray={String(value ?? 0) + ' 100'} />
+      <circle className="gauge-progress" cx="22" cy="22" r="19" pathLength="100" strokeDasharray={String(value ?? 0) + ' 100'}
+        opacity={value != null && value > 0 ? 1 : 0} />
     </svg>
     <span className="gauge-content">
       {!paired && <Icon aria-hidden="true" />}<strong>{percent(value)}{value == null ? '' : '%'}</strong>{paired && <small>{label}</small>}
@@ -57,32 +72,33 @@ function NetworkFace({ sample, totals }: { sample?: Telemetry['network']; totals
   const values = totals ? [sample?.received, sample?.sent] : [rates?.[0], rates?.[1]];
   const history = sample?.history ?? [];
   const max = Math.max(1, ...history.flat());
-  const points = (lane: 0 | 1) => history.map((pair, i) => {
-    const x = 100 * i / Math.max(1, history.length - 1);
-    return x + ',' + (20 - 18 * pair[lane] / max);
-  }).join(' ');
+  const curve = (lane: 0 | 1) => smoothLine(history.map((pair) => 22 - 19 * pair[lane] / max));
   const format = (value: number | undefined) => bytes(value) + (value != null && !totals ? '/s' : '');
-  const title = totals ? 'Data since monitoring began' : 'Current network transfer rate';
+  const download = format(values[0]);
+  const upload = format(values[1]);
+  const title = (totals ? 'Data this session' : 'Current network transfer rate') + ' · Download ' + download + ' · Upload ' + upload;
   return <div className="widget-face network-face" title={title}>
     <div className="network-values">
-      <span aria-label={'Download ' + format(values[0])}><ArrowDown size={12} />{format(values[0])}</span>
-      <span aria-label={'Upload ' + format(values[1])}><ArrowUp size={12} />{format(values[1])}</span>
+      <span aria-label={'Download ' + download}><ArrowDown size={12} aria-hidden="true" /><strong>{download}</strong></span>
+      <span aria-label={'Upload ' + upload}><ArrowUp size={12} aria-hidden="true" /><strong>{upload}</strong></span>
     </div>
-    {totals ? <small>Data this session</small> : <svg viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true">
-      <path d="M0 21H100" />
-      {history.length > 1 && <><polyline points={points(0)} /><polyline points={points(1)} /></>}
-    </svg>}
+    {totals ? <small>Data this session</small> : history.length > 1
+      ? <svg className="network-graph" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true">
+        <path className="network-upload" d={curve(1)} /><path className="network-download" d={curve(0)} />
+      </svg>
+      : <small>{sample === null ? 'Network unavailable' : 'Collecting samples'}</small>}
   </div>;
 }
 
 function MonitorFace({ kind, specimen, live }: FaceProps & { kind: MonitorKind }) {
-  const reading = telemetry.useValue(!specimen || !!live);
+  const snapshot = telemetry.useValue(!specimen || !!live);
+  const reading = snapshot ?? (specimen ? previewTelemetry : undefined);
   if (kind === 'cpu' || kind === 'ram' || kind === 'gpu') return <Gauge kind={kind} value={kind === 'ram' ? used(reading?.ram) : reading?.[kind]} />;
   if (kind === 'system-rings') return <div className="widget-face rings-face" aria-label="CPU and memory usage">
     <Gauge kind="cpu" value={reading?.cpu} paired /><Gauge kind="ram" value={used(reading?.ram)} paired />
   </div>;
   if (kind === 'network' || kind === 'network-usage') return <NetworkFace sample={reading?.network} totals={kind === 'network-usage'} />;
-  if (kind === 'storage') return <div className="widget-face storage-face" title="Free space on the Windows system drive">
+  if (kind === 'storage') return <div className="widget-face storage-face" title={bytes(reading?.disk?.available) + ' free on the Windows system drive'}>
     <div><HardDrive size={14} /><strong>{bytes(reading?.disk?.available)}</strong><small>free</small></div>
     <Bar value={used(reading?.disk)} />
   </div>;
@@ -95,7 +111,8 @@ function MonitorFace({ kind, specimen, live }: FaceProps & { kind: MonitorKind }
 }
 
 export function AudioFace({ device, specimen, live, onError, onDevices, expanded }: FaceProps & { device: Device; onDevices?: () => void; expanded?: boolean }) {
-  const data = audio.useValue(!specimen || !!live)?.[device];
+  const snapshot = audio.useValue(!specimen || !!live);
+  const data = snapshot ? snapshot[device] : specimen ? { level: device === 'input' ? .72 : .58, muted: false } : undefined;
   const [draft, setDraft] = useState<number>();
   const request = useRef(0);
   const timer = useRef<number>(undefined);
@@ -124,7 +141,7 @@ export function AudioFace({ device, specimen, live, onError, onDevices, expanded
         onClick={(event) => {
           if (onDevices) onDevices();
           else void invoke('open_system_panel', { panel: device === 'input' ? 'microphone' : 'audio-output', anchor: dockPopupAnchor(event.currentTarget.closest<HTMLElement>('.audio-face') ?? event.currentTarget) }).catch(onError);
-        }}>{label}<ChevronRight size={13} /></button> : <span>{label}</span>}
+        }}><span>{label}</span><ChevronRight size={13} /></button> : <span>{label}</span>}
       <strong>{data?.muted ? 'Muted' : data ? shown : '—'}</strong>
     </div>
     {specimen ? <Bar value={data ? total : undefined} /> : <input type="range" aria-label={label + ' level'} data-no-drag
@@ -154,6 +171,16 @@ const captures: [string, string, LucideIcon][] = [
   ['fullscreen', 'Save a full-screen screenshot', Scan],
   ['snipping-tool', 'Open Snipping Tool', Camera],
 ];
+
+const systemGlyphs: Partial<Record<WidgetKind, LucideIcon>> = {
+  ...meterIcons, 'system-rings': Activity, performance: Activity, network: Wifi, 'network-usage': Wifi,
+  storage: HardDrive, volume: Volume2, microphone: Mic, capture: Camera,
+};
+
+export function SystemWidgetGlyph({ kind }: { kind: WidgetKind }) {
+  const Icon = systemGlyphs[kind] ?? tools[kind as SystemKind]?.[2];
+  return Icon ? <Icon aria-hidden="true" /> : <i />;
+}
 
 function Tool({ tool: [action, label, Icon], specimen, onError }: FaceProps & { tool: [string, string, LucideIcon] }) {
   const opensPanel = action === 'tray' || action === 'notifications' || action === 'quick-settings' || action === 'audio-output';

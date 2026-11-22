@@ -57,7 +57,7 @@ export const isClockKind = (kind: string): kind is ClockKind => clockKinds.some(
 export const isSpotifyKind = (kind: string): kind is SpotifyKind => spotifyKinds.some((spotify) => spotify === kind);
 export const isWeatherKind = (kind: string): kind is WeatherKind => weatherKinds.some((weather) => weather === kind);
 export const isLayoutWidget = (kind: string) => kind === 'spacer' || kind === 'divider';
-export const isStartWidget = (kind: string) => kind === 'start' || kind === 'spacebar-start';
+export const isStartWidget = (kind: string): kind is 'start' | 'spacebar-start' => kind === 'start' || kind === 'spacebar-start';
 export const repeatableWidget = (kind: WidgetKind) => kind === 'folder' || kind === 'clock-plain' || isLayoutWidget(kind);
 
 export const widgetNames = Object.fromEntries(Object.entries(widgetCatalog).map(([kind, widget]) => [kind, widget.name])) as Record<WidgetKind, string>;

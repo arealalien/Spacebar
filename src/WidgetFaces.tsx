@@ -5,7 +5,7 @@ import { DockAppIcon } from './AppIcon';
 import { demoApps, type DockApp } from './model';
 import { dockPopupAnchor, type WidgetItem, type WidgetKind } from './widgets';
 import { isClockKind, isSpotifyKind, isStartWidget, isWeatherKind, widgetCatalog, type ClockKind } from './widgetCatalog';
-import { SystemWidget } from './SystemWidgets';
+import { SystemWidget, SystemWidgetGlyph } from './SystemWidgets';
 import { SpotifyFace } from './SpotifyWidgets';
 import { isPersonalWidget, PersonalGlyph, PersonalWidget } from './PersonalWidgets';
 import { AudioVisualizer } from './AudioVisualizer';
@@ -137,7 +137,7 @@ function FolderContents({ item, apps }: { item?: WidgetItem; apps: DockApp[] }) 
     {child.kind === 'app' ? <DockAppIcon app={apps.find((app) => app.id === child.appId) ?? { id: child.appId ?? '', icon: child.icon }} />
       : isStartWidget(child.kind) ? <WindowsMark /> : isClockKind(child.kind) ? <Clock3 size="75%" /> : isSpotifyKind(child.kind) ? <Music2 size="75%" />
       : isPersonalWidget(child.kind) ? <PersonalGlyph kind={child.kind} />
-      : child.kind === 'audio-visualizer' ? <AudioLines size="75%" /> : isWeatherKind(child.kind) ? <CloudSun size="75%" /> : <i />}
+      : child.kind === 'audio-visualizer' ? <AudioLines size="75%" /> : isWeatherKind(child.kind) ? <CloudSun size="75%" /> : <SystemWidgetGlyph kind={child.kind} />}
   </span>)}</span>;
 }
 

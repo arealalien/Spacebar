@@ -1,5 +1,5 @@
 use crate::{
-    settings::{save_json, DockEdge, Material, Settings},
+    settings::{save_json, AppAppearance, DockEdge, Material, Settings},
     start_launcher::StartPreferences,
     start_menu, system_panel,
     widgets::{migrate_widget_items, valid_layout, Item, Layout},
@@ -17,6 +17,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 #[serde(default, rename_all = "camelCase")]
 struct DockData {
     settings: Settings,
+    app_appearance: Option<AppAppearance>,
     widgets: Layout,
     app_order: Vec<String>,
     saved_docks: Vec<SavedDock>,
@@ -191,7 +192,9 @@ impl DockStore {
     pub fn load(app: &AppHandle) -> tauri::Result<Self> {
         let directory = app.path().app_config_dir()?;
         let path = directory.join("dock.json");
-        let data = DockData::load(&path, &directory);
+        let mut data = DockData::load(&path, &directory);
+        data.app_appearance
+            .get_or_insert_with(|| data.settings.legacy_app_appearance());
         start_menu::set_spacebar_start(
             data.widgets.uses_spacebar_start(),
             data.settings.replace_windows_start,
@@ -307,6 +310,22 @@ pub fn read_settings(store: State<'_, DockStore>) -> Settings {
 }
 
 #[tauri::command]
+pub(crate) fn read_app_appearance(store: State<'_, DockStore>) -> Result<AppAppearance, String> {
+    Ok(store.lock()?.app_appearance.unwrap_or_default())
+}
+
+#[tauri::command]
+pub(crate) fn write_app_appearance(
+    store: State<'_, DockStore>,
+    appearance: AppAppearance,
+) -> Result<(), String> {
+    let mut current = store.lock()?;
+    let mut next = current.clone();
+    next.app_appearance = Some(appearance);
+    store.commit(&mut current, next)
+}
+
+#[tauri::command]
 pub fn write_settings(
     app: AppHandle,
     store: State<'_, DockStore>,
@@ -382,6 +401,37 @@ pub fn edit_saved_docks(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migrates_legacy_app_appearance_and_keeps_it_when_loading_a_dock() {
+        let mut data: DockData =
+            serde_json::from_str(r#"{"settings":{"accent":"light"}}"#).unwrap();
+        let appearance = data.settings.legacy_app_appearance();
+        assert_eq!(
+            serde_json::to_value(appearance).unwrap(),
+            serde_json::json!({"theme": "light", "tintColor": "#e8e9ed", "blurAmount": 100, "tintAmount": 100})
+        );
+        data.app_appearance = Some(appearance);
+        data.edit_saved(SavedDockEdit::Save {
+            id: "work".into(),
+            name: "Work".into(),
+        })
+        .unwrap();
+
+        data.app_appearance = serde_json::from_value(
+            serde_json::json!({"theme": "dark", "tintColor": "#52A1CF", "blurAmount": 73, "tintAmount": 81}),
+        )
+        .unwrap();
+        let mut reloaded: DockData =
+            serde_json::from_slice(&serde_json::to_vec(&data).unwrap()).unwrap();
+        reloaded
+            .edit_saved(SavedDockEdit::Load { id: "work".into() })
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(reloaded.app_appearance).unwrap(),
+            serde_json::json!({"theme": "dark", "tintColor": "#52a1cf", "blurAmount": 73, "tintAmount": 81})
+        );
+    }
 
     #[test]
     fn start_preferences_preserve_app_layout_from_older_docks() {

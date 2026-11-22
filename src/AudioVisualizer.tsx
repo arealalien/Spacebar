@@ -1,7 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useState } from 'react';
 import { desktop } from './model';
 import { audioDefaults, type AudioVisualizerOptions } from './widgets';
+import { smoothLine } from './widgetGraph';
 
 const example = [.04, .12, .42, .18, .29, .66, .31, .19, .48, .85, .52, .31, .52, .26, .12, .06];
 const silent: number[] = example.map(() => 0);
@@ -86,9 +87,14 @@ export function AudioVisualizer({ specimen, active = true, options }: {
 
   const values = specimen || !desktop ? example : active ? levels : silent;
   const label = available ? 'Audio output visualizer' : 'Audio output unavailable';
+  const centered = alignment === 'center';
+  const baseline = centered ? 16 : 29;
+  const wave = smoothLine(values.map((level) => baseline - level * (centered ? 14 : 25)));
+  const resting = values.every((level) => level === 0);
   return <span className="widget-face audio-visualizer-face" role="img" aria-label={label} title={label}>
-    <span className="audio-spectrum" data-alignment={alignment} aria-hidden="true">{values.map((level, index) =>
-      <i key={index} style={{ '--audio-level': Math.max(.055, level) } as CSSProperties} />)}
-    </span>
+    <svg className="audio-spectrum" data-resting={resting} viewBox="0 0 100 32" preserveAspectRatio="none" aria-hidden="true">
+      {centered && !resting && <path className="audio-spectrum-reflection" d={wave} transform="translate(0 32) scale(1 -1)" />}
+      <path d={wave} />
+    </svg>
   </span>;
 }

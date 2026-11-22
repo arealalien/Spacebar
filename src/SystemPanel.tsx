@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { Bell, Settings2, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { Calendar } from './Calendar';
-import { defaults, type Settings } from './model';
+import { contrastingInk, defaults, type Settings } from './model';
 import { AgendaPanel, DrawingPad, QuickNote } from './PersonalPanels';
 import { QuickTasks, ScreenColors } from './UtilityPanels';
 import { PersonalGlyph, isPersonalWidget } from './PersonalWidgets';
@@ -19,14 +19,6 @@ const names: Record<PanelKind, string> = {
   'quick-tasks': 'Quick Tasks', 'color-picker': 'Color Picker',
   'audio-output': 'Audio output', microphone: 'Microphone',
 };
-
-function calendarDayInk(tint: string) {
-  const [red, green, blue] = [1, 3, 5].map((index) => {
-    const channel = Number.parseInt(tint.slice(index, index + 2), 16) / 255;
-    return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4;
-  });
-  return .2126 * red + .7152 * green + .0722 * blue > .179 ? '#000' : '#fff';
-}
 
 export function SystemPanel() {
   const panel = useSurfacePayload<PanelKind>('system-panel-changed', 'read_system_panel');
@@ -67,7 +59,7 @@ export function SystemPanel() {
   const utility = panel === 'quick-tasks' || panel === 'color-picker';
   return <main className={`system-panel${utility ? ' utility-panel' : ''}`} data-panel={panel} data-quick={quick || undefined} data-personal={personal || undefined} data-material={settings.material} data-edge={settings.edge}
     role={utility ? 'dialog' : undefined} aria-labelledby="system-panel-title" tabIndex={-1} ref={content}
-    style={{ '--dock-tint': settings.tintColor, '--calendar-day-ink': settings.material === 'tinted' ? calendarDayInk(settings.tintColor) : undefined } as CSSProperties}
+    style={{ '--dock-tint': settings.tintColor, '--calendar-day-ink': settings.material === 'tinted' ? contrastingInk(settings.tintColor) : undefined } as CSSProperties}
     onKeyDown={(event) => { if (event.key === 'Escape') close(); }}>
     {(quick || panel === 'spacebar-start' || panel === 'tray') && startBackdrop && <img className="start-backdrop" src={startBackdrop} alt="" draggable={false} />}
     {panel === 'spacebar-start' ? <>

@@ -43,7 +43,7 @@ export function PersonalWidget({ kind, specimen, onError = console.error }: {
     : next ? timeUntil(next.startsAt - now) : specimen ? 'Next event' : 'No upcoming events';
   const showText = agenda || tasks;
   const face = <><PersonalGlyph kind={kind} />{showText && <span className="agenda-face-text">
-    <strong>{label}</strong><small>{urgency}</small>
+    <strong>{label}</strong>{urgency && <small>{urgency}</small>}
   </span>}</>;
   const className = `widget-face personal-face${showText ? ' agenda-face' : ''}`;
   if (specimen) return <span className={className}>{face}</span>;

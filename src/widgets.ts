@@ -97,7 +97,7 @@ const multiColorOptions: Partial<Record<WidgetKind, readonly WidgetColorOption[]
   'clock-twilight': [clockColors[0], { ...clockColors[1], defaultColor: '#ffbd97' }],
 };
 const singleColorOption: readonly WidgetColorOption[] = [{ key: 'accent', label: 'Color', defaultColor: '#f4f3f5' }];
-const visualizerColor: readonly WidgetColorOption[] = [{ key: 'accent', label: 'Bar color', defaultColor: '#d7e5ff' }];
+const visualizerColor: readonly WidgetColorOption[] = [{ key: 'accent', label: 'Wave color', defaultColor: '#d7e5ff' }];
 
 export function widgetColorOptions(kind: WidgetItem['kind']): readonly WidgetColorOption[] {
   if (kind === 'app' || kind === 'apps' || kind === 'spacer') return [];

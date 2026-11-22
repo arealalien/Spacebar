@@ -1,4 +1,4 @@
-import type { Settings } from './model';
+import type { AppAppearance, Settings } from './model';
 import type { WidgetItem, WidgetLayout } from './widgets';
 
 export interface StoredDock {
@@ -10,6 +10,7 @@ export interface StoredDock {
 
 interface BrowserDock {
   settings?: Settings;
+  appAppearance?: AppAppearance;
   widgets?: WidgetLayout;
   savedDocks?: StoredDock[];
   activeDock?: string | null;

@@ -63,6 +63,18 @@ export interface Settings {
   appIconClickSpeed: number;
 }
 
+export interface AppAppearance {
+  theme: 'system' | 'light' | 'dark';
+  tintColor: string;
+  blurAmount: number;
+  tintAmount: number;
+}
+
+export const appAppearanceAmountRange = { min: 0, max: 100 };
+export const defaultAppAppearance: AppAppearance = {
+  theme: 'system', tintColor: accents.purple.color, blurAmount: 100, tintAmount: 100,
+};
+
 export const defaults: Settings = {
   edge: 'bottom', alignment: 'center', fullSpan: false,
   iconSize: 46, spacing: 10, padding: 8, offset: 12, zoom: 1.55, falloff: 2.1, duration: 420,
@@ -80,6 +92,14 @@ export function normalizeHexColor(value: unknown) {
   const hex = value.trim().replace(/^#/, '').toLowerCase();
   if (/^[a-f\d]{6}$/.test(hex)) return '#' + hex;
   if (/^[a-f\d]{3}$/.test(hex)) return '#' + Array.from(hex, (digit) => digit.repeat(2)).join('');
+}
+
+export function contrastingInk(hex: string) {
+  const [red, green, blue] = [1, 3, 5].map((index) => {
+    const channel = Number.parseInt(hex.slice(index, index + 2), 16) / 255;
+    return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4;
+  });
+  return .2126 * red + .7152 * green + .0722 * blue > .179 ? '#000' : '#fff';
 }
 
 export const desktop = isTauri();
@@ -153,6 +173,40 @@ export function normalizeSettings(value: unknown): Settings {
 export async function writeSettings(settings: Settings) {
   if (desktop) await invoke('write_settings', { settings });
   else writeBrowserDock({ settings });
+}
+
+export async function readAppAppearance(): Promise<AppAppearance> {
+  const appAppearance = desktop
+    ? await invoke<AppAppearance>('read_app_appearance')
+    : readBrowserDock().appAppearance;
+  if (appAppearance) {
+    const { theme, tintColor, blurAmount, tintAmount } = appAppearance;
+    const { min, max } = appAppearanceAmountRange;
+    const amount = (value: unknown, fallback: number) =>
+      typeof value === 'number' && Number.isFinite(value)
+        ? Math.min(max, Math.max(min, Math.round(value)))
+        : fallback;
+    return {
+      theme: theme === 'light' || theme === 'dark' ? theme : 'system',
+      tintColor: normalizeHexColor(tintColor) ?? defaultAppAppearance.tintColor,
+      blurAmount: amount(blurAmount, defaultAppAppearance.blurAmount),
+      tintAmount: amount(tintAmount, defaultAppAppearance.tintAmount),
+    };
+  }
+
+  const accent = browserSettings().accent;
+  const appearance: AppAppearance = {
+    ...defaultAppAppearance,
+    theme: accent === 'light' || accent === 'dark' ? accent : 'system',
+    tintColor: accents[accent].color,
+  };
+  writeBrowserDock({ appAppearance: appearance });
+  return appearance;
+}
+
+export async function writeAppAppearance(appearance: AppAppearance) {
+  if (desktop) await invoke('write_app_appearance', { appearance });
+  else writeBrowserDock({ appAppearance: appearance });
 }
 
 export function subscribeSettings(callback: (settings: Settings) => void) {
