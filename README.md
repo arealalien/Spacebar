@@ -17,15 +17,17 @@ The launcher detects the local Rust toolchain in `.toolchain` if present. Otherw
 
 To try the settings and a sample dock in the browser, run `npm.cmd run dev` and open `http://127.0.0.1:1420`. To create a Windows installer, run `npm.cmd run tauri build`. Tauri writes the NSIS installer under `src-tauri/target/release/bundle/nsis/`.
 
-## Updates from a private GitHub repository
+## Install and update Spacebar
 
-Install Spacebar 0.6.6 or later once on each PC. On that PC, open **Credential Manager → Windows Credentials → Add a generic credential**. Use `Spacebar GitHub Updates` as the address, `OWNER/REPOSITORY` as the username, and a [fine-grained GitHub token](https://github.com/settings/personal-access-tokens/new) as the password. Give the token access to the Spacebar repository with **Contents: Read-only**. Update the credential when the token expires.
+Download the Windows x64 setup `.exe` from the [latest Spacebar release](https://github.com/arealalien/Spacebar/releases/latest) and run it. Spacebar 0.6.8 and later check for updates without a GitHub account or token. If you use an earlier version, run the latest installer once to switch to the public update feed.
 
 Spacebar checks the latest published release when it starts, even when it starts into the dock at sign-in. When a newer version is available, a notice with a **Download** button appears above the version label in Settings. Once the download has passed signature verification, **Install update** starts the installer and restarts Spacebar.
 
-To publish updates, push the source to a private GitHub repository and set the Actions secret `TAURI_SIGNING_PRIVATE_KEY` to the private key that matches the public key in `src-tauri/tauri.conf.json`. Set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if the key has a password. Keep the signing key backed up outside the repository. Installed copies use the matching public key to verify future updates.
+## Publish a release
 
-For each release, bump the version in `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, and the `spacebar` entries in `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock`. Commit the version changes and push a matching tag such as `v0.6.7`. The Windows release workflow builds and signs the installer, uploads it with its update manifest, then publishes the release.
+Set the Actions secret `TAURI_SIGNING_PRIVATE_KEY` to the private key that matches the public key in `src-tauri/tauri.conf.json`. Set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if the key has a password. Keep the signing key backed up outside the repository. Installed copies use the matching public key to verify updates.
+
+For each release, bump the version in `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, and the `spacebar` entries in `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock`. Commit the version changes and push a matching tag such as `v0.6.9`. The Windows release workflow builds and signs the installer, uploads it with its update manifest, then publishes the release.
 
 ## What the dock supports
 
