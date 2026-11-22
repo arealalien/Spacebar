@@ -21,7 +21,7 @@ To try the settings and a sample dock in the browser, run `npm.cmd run dev` and 
 
 Install Spacebar 0.6.6 or later once on each PC. On that PC, open **Credential Manager → Windows Credentials → Add a generic credential**. Use `Spacebar GitHub Updates` as the address, `OWNER/REPOSITORY` as the username, and a [fine-grained GitHub token](https://github.com/settings/personal-access-tokens/new) as the password. Give the token access to the Spacebar repository with **Contents: Read-only**. Update the credential when the token expires.
 
-Spacebar checks the latest published release when it starts, even when it starts into the dock at sign-in. When a newer version is available, **Download update** appears above the version label in Settings. Once the download has passed signature verification, **Install update** starts the installer and restarts Spacebar.
+Spacebar checks the latest published release when it starts, even when it starts into the dock at sign-in. When a newer version is available, a notice with a **Download** button appears above the version label in Settings. Once the download has passed signature verification, **Install update** starts the installer and restarts Spacebar.
 
 To publish updates, push the source to a private GitHub repository and set the Actions secret `TAURI_SIGNING_PRIVATE_KEY` to the private key that matches the public key in `src-tauri/tauri.conf.json`. Set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if the key has a password. Keep the signing key backed up outside the repository. Installed copies use the matching public key to verify future updates.
 

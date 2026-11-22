@@ -10,7 +10,7 @@ type Update = {
 };
 
 const copy = {
-  available: { title: 'Update available', action: 'Download update' },
+  available: { title: 'Update available', action: 'Download' },
   downloading: { title: 'Downloading update', action: 'Downloading…' },
   ready: { title: 'Update downloaded', action: 'Install update' },
   installing: { title: 'Installing update', action: 'Installing…' },
