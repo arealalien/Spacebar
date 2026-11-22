@@ -1,6 +1,6 @@
 {
   "identifier": "spacebar-preview",
-  "description": "Listen for native app and widget preview updates",
-  "windows": ["preview", "widget-popup"],
+  "description": "Listen for native preview and dock effects updates",
+  "windows": ["preview", "widget-popup", "dock-effects"],
   "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
 }

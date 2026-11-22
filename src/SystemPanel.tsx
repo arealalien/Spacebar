@@ -7,6 +7,7 @@ import { AgendaPanel, DrawingPad, QuickNote } from './PersonalPanels';
 import { QuickTasks, ScreenColors } from './UtilityPanels';
 import { PersonalGlyph, isPersonalWidget } from './PersonalWidgets';
 import { StartLauncher } from './StartLauncher';
+import { SurfaceSnow } from './SurfaceSnow';
 import { useSurfacePayload } from './useSurfacePayload';
 import { QuickSettings } from './QuickSettings';
 import { SystemTray } from './SystemTray';
@@ -61,6 +62,7 @@ export function SystemPanel() {
     role={utility ? 'dialog' : undefined} aria-labelledby="system-panel-title" tabIndex={-1} ref={content}
     style={{ '--dock-tint': settings.tintColor, '--calendar-day-ink': settings.material === 'tinted' ? contrastingInk(settings.tintColor) : undefined } as CSSProperties}
     onKeyDown={(event) => { if (event.key === 'Escape') close(); }}>
+    {settings.dockSnow && <SurfaceSnow key={panel} />}
     {(quick || panel === 'spacebar-start' || panel === 'tray') && startBackdrop && <img className="start-backdrop" src={startBackdrop} alt="" draggable={false} />}
     {panel === 'spacebar-start' ? <>
       <StartLauncher onClose={close} onError={report} />

@@ -1,16 +1,18 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Minus, Orbit, Settings2 } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithRef, type CSSProperties, type PointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentPropsWithRef, type CSSProperties, type PointerEvent } from 'react';
 import { defaults, demoApps, readSettings, subscribeSettings, verticalDock, type DockApp, type Settings } from './model';
 import { followPopupMotion, magnification } from './dockMotion';
 import { AppIcon, appIconStyle, DockAppIcon, NotificationBadge, notificationLabel } from './AppIcon';
+import { DockEffects, DockSnowCap } from './DockEffects';
+import { DockSnow } from './dockSnow';
 import { appMenuTarget, dockPopupAnchor, middleClick, openDockMenu, widgetMenuTarget } from './DockOverlays';
 import { preferredWidgetWidth, WidgetFace } from './WidgetFaces';
 import { useDockApps } from './useDockApps';
 import { isLayoutWidget, isSpotifyKind, isStartWidget, widgetCatalog } from './widgetCatalog';
 import {
-  defaultSpacerSize, editWidgets, placeWidget, removeWidget, rowApps, supportsWidgetSurface,
+  defaultSpacerSize, editWidgets, hasWidgetSurface, placeWidget, removeWidget, rowApps, supportsWidgetSurface,
   useWidgetDrag, useWidgets, widgetAppearance, widgetColorStyle, widgetNames, widgetScale,
   type WidgetDrag, type WidgetItem, type WidgetKind, type WidgetTarget,
 } from './widgets';
@@ -96,8 +98,9 @@ function RemoveBadge({ item, onError }: { item: WidgetItem; onError: (error: unk
     onClick={() => void editWidgets((items) => removeWidget(items, item.id)).catch(onError)}><Minus size={11} strokeWidth={3} /></button>;
 }
 
-function WidgetBlock({ item, apps, width, height, unit, shift, preview, active, editing, highlight, onError }: {
-  item: WidgetItem; apps: DockApp[]; width: number; height: number; unit: number; shift: number; preview: boolean; active: boolean; editing: boolean; highlight: string; onError: (error: unknown) => void;
+function WidgetBlock({ item, apps, width, height, unit, shift, preview, active, editing, highlight, snow, onError }: {
+  item: WidgetItem; apps: DockApp[]; width: number; height: number; unit: number; shift: number; preview: boolean; active: boolean;
+  editing: boolean; highlight: string; snow?: DockSnow; onError: (error: unknown) => void;
 }) {
   const drag = useWidgetDrag({ type: 'item', id: item.id }, !preview);
   const fill = fillsDock(item);
@@ -110,6 +113,8 @@ function WidgetBlock({ item, apps, width, height, unit, shift, preview, active, 
       if (preview) return;
       void invoke('open_folder', { id: item.id, anchor: dockPopupAnchor(button) }).catch(onError);
     }} />
+    {snow && (hasWidgetSurface(item, 'background') || hasWidgetSurface(item, 'frame')) &&
+      <DockSnowCap id={'widget:' + item.id} snow={snow} />}
     {editing && <RemoveBadge item={item} onError={onError} />}
   </div>;
 }
@@ -210,6 +215,7 @@ export function Dock({ settings, apps, allApps, items, drag, preview = false, ed
   const [available, setAvailable] = useState(0);
   const [demoVisible, setDemoVisible] = useState(false);
   const [clickPulse, setClickPulse] = useState<ClickPulse>();
+  const snow = useMemo(() => settings.dockSnow ? new DockSnow() : undefined, [settings.dockSnow]);
   const buttons = useRef(new Map<string, HTMLButtonElement>());
   const frame = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
@@ -382,6 +388,7 @@ export function Dock({ settings, apps, allApps, items, drag, preview = false, ed
     '--dock-align': settings.alignment === 'start' ? 'flex-start' : settings.alignment === 'end' ? 'flex-end' : 'center',
     '--dock-padding': `${settings.padding}px`, '--frameless-outset': `${framelessInset - settings.padding}px`,
     '--dock-duration': `${settings.duration}ms`, '--dock-offset': `${settings.offset}px`, '--end-shift': `${motion.end}px`,
+    '--dock-snow-headroom': `${snow && !preview ? Math.min(24, settings.offset) : 0}px`,
     '--surface-shift': `${(motion.end - motion.start) / 2}px`,
     '--surface-scale': width ? 1 + (motion.start + motion.end) / width : 1,
     '--reveal-duration': `${settings.revealDuration}ms`, '--reveal-curve': revealCurve,
@@ -389,12 +396,16 @@ export function Dock({ settings, apps, allApps, items, drag, preview = false, ed
 
   return (
     <div ref={frame} className={`dock-frame ${preview ? 'dock-sample' : 'dock-desktop'}`} style={style} data-edge={settings.edge} data-material={settings.material} data-vertical={vertical} data-span={settings.fullSpan} onPointerLeave={() => setDemoVisible(false)}>
+      {snow &&
+        <DockEffects frame={frame} body={body} settings={settings} visible={visible} motion={motionAllowed} preview={preview} snow={snow} />}
       {preview && settings.autoHide && <button className="demo-edge" aria-label="Reveal dock preview" onPointerEnter={() => setDemoVisible(true)} onFocus={() => setDemoVisible(true)} onClick={() => setDemoVisible(true)} />}
       <div ref={body} className={`dock-body${visible ? '' : ' dock-hidden'}${target && !target.before && !target.folder ? ' drop-end' : ''}`} inert={!visible} aria-label={preview ? 'Interactive dock preview' : 'Spacebar dock'} data-editing={editing}
         onPointerMove={trackPointer} onPointerLeave={() => { clickedApp.current = undefined; setOverSettings(false); setHover(undefined); }}
         onContextMenu={preview ? undefined : (event) => openDockMenu(event, { type: 'dock' }, onError)}
         onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) { setOverSettings(false); setHover(undefined); } }}>
-        {settings.material !== 'clear' && <span className={`dock-surface material-${settings.material}`} aria-hidden="true" />}
+        {settings.material !== 'clear' && <span className={`dock-surface material-${settings.material}`} aria-hidden="true">
+          {snow && <DockSnowCap id="dock" snow={snow} />}
+        </span>}
         {displayed.map((item, widgetIndex) => item.kind === 'apps' ? <div className={`dock-app-row ${highlight(item.id)}`} key={item.id} ref={appRow} data-dock-widget={item.id} data-kind="apps"
           data-fill-dock={fillsDock(item)} style={fillsDock(item) ? (vertical ? { width: filledRowDepth } : { height: filledRowDepth }) : undefined} {...widgetAppearance(item)}
           onContextMenu={preview ? undefined : (event) => openDockMenu(event, widgetMenuTarget(item), onError)}>
@@ -433,6 +444,7 @@ export function Dock({ settings, apps, allApps, items, drag, preview = false, ed
                   style={pulse && { '--app-click-time': `${pulse.duration}ms`, '--app-squish-time': `${pulse.squishDuration}ms` } as CSSProperties}>
                   <span className="dock-click-art">
                     <DockAppIcon app={app} />
+                    {snow && draggedApp !== app.id && <DockSnowCap id={'app:' + app.id} snow={snow} />}
                     <NotificationBadge notification={app.notification} mode={settings.notificationBadges} />
                   </span>
                   {pulse?.effect === 'stars' && <LaunchStars />}
@@ -450,7 +462,7 @@ export function Dock({ settings, apps, allApps, items, drag, preview = false, ed
         })}
         {editing && <RemoveBadge item={item} onError={onError} />}
         </div> : <WidgetBlock key={item.id} item={item} apps={allApps} {...widgetSizeFor(item)}
-          shift={rowIndex < 0 ? 0 : widgetIndex < rowIndex ? -motion.start : motion.end} preview={preview} active={visible} editing={editing} highlight={highlight(item.id)} onError={onError} />)}
+          shift={rowIndex < 0 ? 0 : widgetIndex < rowIndex ? -motion.start : motion.end} preview={preview} active={visible} editing={editing} highlight={highlight(item.id)} snow={snow} onError={onError} />)}
         {!width && drag && <span className="dock-empty-drop">Drop a widget here</span>}
         {divider && <span className="dock-divider" />}
         {gear && <button className="dock-settings" onFocus={() => setOverSettings(true)} onClick={onSettings} title="Spacebar settings" aria-label="Spacebar settings">

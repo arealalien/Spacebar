@@ -54,6 +54,7 @@ export interface Settings {
   revealAnimation: 'easing' | 'bounce';
   bounceAmount: number;
   material: 'tinted' | 'midnight' | 'clear';
+  dockSnow: boolean;
   tintColor: string;
   accent: keyof typeof accents;
   appIconShape: keyof typeof appIconShapes;
@@ -81,7 +82,7 @@ export const defaults: Settings = {
   magnify: true, names: true, previews: true, previewDisplay: 'window', indicators: true, notificationBadges: 'dot',
   hideSettingsIcon: false, autoHide: false, replaceTaskbar: true, replaceWindowsStart: false,
   revealDuration: 260, revealAnimation: 'easing', bounceAmount: 35,
-  material: 'tinted', tintColor: '#c8b6ff',
+  material: 'tinted', tintColor: '#c8b6ff', dockSnow: false,
   accent: 'purple',
   appIconShape: 'original', appIconBackground: 'transparent', appIconColor: '#30343e',
   appIconClickEffect: 'none', appIconClickSpeed: 100,
@@ -155,6 +156,7 @@ export function normalizeSettings(value: unknown): Settings {
   const padding = stored.padding;
   return {
     ...defaults, ...preferences, material,
+    dockSnow: stored.dockSnow === true,
     padding: typeof padding === 'number' && Number.isFinite(padding)
       ? Math.min(dockPaddingRange.max, Math.max(dockPaddingRange.min, Math.round(padding)))
       : defaults.padding,

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Spacebar",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "identifier": "app.spacebar.dock",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -25,6 +25,7 @@
         "windowEffects": { "effects": ["acrylic"] }
       },
       { "label": "dock", "create": false, "url": "index.html?surface=dock", "title": "Spacebar Dock", "width": 460, "height": 148, "visible": false, "decorations": false, "resizable": false, "shadow": false, "transparent": true, "skipTaskbar": true, "alwaysOnTop": true, "focus": false },
+      { "label": "dock-effects", "create": false, "url": "index.html?surface=dock-effects", "title": "Spacebar Dock Effects", "width": 460, "height": 148, "visible": false, "decorations": false, "resizable": false, "shadow": false, "transparent": true, "skipTaskbar": true, "alwaysOnTop": true, "focus": false, "focusable": false },
       { "label": "preview", "create": false, "url": "index.html?surface=preview", "title": "Spacebar Window Preview", "width": 274, "height": 180, "visible": false, "decorations": false, "resizable": false, "shadow": false, "skipTaskbar": true, "alwaysOnTop": true, "focus": false, "focusable": false, "transparent": true },
       { "label": "peek", "create": false, "url": "index.html?surface=peek", "title": "Spacebar Full Window Preview", "visible": false, "decorations": false, "resizable": false, "shadow": false, "skipTaskbar": true, "alwaysOnTop": true, "focus": false, "focusable": false, "backgroundColor": "#101018" },
       { "label": "folder", "create": false, "url": "index.html?surface=folder", "title": "Spacebar Folder", "width": 440, "height": 370, "visible": false, "decorations": false, "resizable": false, "shadow": false, "transparent": true, "skipTaskbar": true, "alwaysOnTop": true, "focus": false },

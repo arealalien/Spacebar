@@ -32,6 +32,8 @@ mod start_menu;
 #[cfg(windows)]
 mod startup;
 #[cfg(windows)]
+mod surface_snow;
+#[cfg(windows)]
 mod system_panel;
 #[cfg(windows)]
 mod system_widgets;

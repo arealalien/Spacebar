@@ -19,7 +19,7 @@ use crate::{
     widget_content::{self, WidgetContentStore},
     widgets::{self, OpenFolder, WidgetDrag},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -67,6 +67,7 @@ struct DockLayout {
     corner: i32,
     margin: i32,
     top_margin: i32,
+    snow_headroom: i32,
 }
 
 #[derive(Default)]
@@ -78,7 +79,20 @@ struct DockPlacement {
     revealed: bool,
     idle_since: Option<Instant>,
     hide_at: Option<Instant>,
+    effects: Option<DockEffectScene>,
+    effects_position: Option<(Bounds, bool)>,
 }
+
+#[derive(Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DockEffectScene {
+    opacity: f64,
+    offset_x: f64,
+    offset_y: f64,
+}
+
+#[derive(Default)]
+struct DockEffectsWindow(Mutex<()>);
 
 fn overlaps_start(layout: DockLayout, panel: Option<Panel>) -> bool {
     let Some(panel) = panel else { return false };
@@ -312,6 +326,63 @@ pub(crate) fn move_popup(hwnd: HWND, bounds: RECT) -> bool {
 #[cfg(test)]
 mod placement_tests {
     use super::*;
+
+    #[test]
+    fn dock_effects_leave_room_for_snow_and_stop_at_the_monitor_edges() {
+        let monitor = Bounds {
+            left: -1000,
+            top: -20,
+            width: 1000,
+            height: 800,
+        };
+        let layout = DockLayout {
+            edge: DockEdge::Left,
+            window: Bounds {
+                left: -984,
+                top: -12,
+                width: 160,
+                height: 790,
+            },
+            monitor,
+            scale: 1.5,
+            ..DockLayout::default()
+        };
+        let effects = dock_effects_bounds(layout);
+        assert_eq!(effects.left, monitor.left);
+        assert_eq!(effects.left + effects.width, -716);
+        assert_eq!(effects.top, monitor.top);
+        assert_eq!(effects.top + effects.height, monitor.top + monitor.height);
+
+        let layout = DockLayout {
+            edge: DockEdge::Top,
+            window: Bounds {
+                left: -1000,
+                top: 0,
+                width: 1000,
+                height: 260,
+            },
+            ..layout
+        };
+        let effects = dock_effects_bounds(layout);
+        assert_eq!(effects.top, monitor.top);
+        assert_eq!(effects.top + effects.height, 368);
+        assert_eq!(effects.width, monitor.width);
+
+        let layout = DockLayout {
+            edge: DockEdge::Bottom,
+            window: Bounds {
+                left: -750,
+                top: 360,
+                width: 500,
+                height: 260,
+            },
+            ..layout
+        };
+        let effects = dock_effects_bounds(layout);
+        assert_eq!(effects.left, layout.window.left - 108);
+        assert_eq!(effects.width, layout.window.width + 216);
+        assert_eq!(effects.top + effects.height, 728);
+    }
 
     #[test]
     fn panel_trigger_matches_its_widget_after_the_panel_loses_focus() {
@@ -624,6 +695,7 @@ fn place_dock(
     .min(across);
     let body_depth = px(strip_height + 4.0).min(frame_depth);
     let offset = px(settings.offset as f64);
+    let snow_headroom = if settings.dock_snow { px(24.0) } else { 0 };
     let axis_start = if vertical { area.top } else { area.left }
         + settings.alignment.offset(along - frame_length);
     let body_start = axis_start + settings.alignment.offset(frame_length - body_length);
@@ -642,20 +714,24 @@ fn place_dock(
                 height: body_depth,
             },
         ),
-        DockEdge::Top => (
-            Bounds {
-                left: axis_start,
-                top: area.top + offset,
-                width: frame_length,
-                height: frame_depth,
-            },
-            Bounds {
-                left: body_start,
-                top: area.top + offset,
-                width: body_length,
-                height: body_depth,
-            },
-        ),
+        DockEdge::Top => {
+            // The WebView starts above the strip when the offset leaves room for snow.
+            let headroom = offset.min(snow_headroom);
+            (
+                Bounds {
+                    left: axis_start,
+                    top: area.top + offset - headroom,
+                    width: frame_length,
+                    height: frame_depth + headroom,
+                },
+                Bounds {
+                    left: body_start,
+                    top: area.top + offset,
+                    width: body_length,
+                    height: body_depth,
+                },
+            )
+        }
         DockEdge::Left => (
             Bounds {
                 left: area.left + offset,
@@ -700,6 +776,7 @@ fn place_dock(
         corner: px(34.0),
         margin: px(8.0),
         top_margin: px(if settings.auto_hide { 26.0 } else { 8.0 }),
+        snow_headroom,
     };
     let mut dock_placement = placement.0.lock().map_err(|error| error.to_string())?;
     if dock_placement.layout == Some(new_layout) {
@@ -727,10 +804,12 @@ fn place_dock(
     apply_dock_region(hwnd, new_layout, dock_placement.expanded)?;
     dock_placement.layout = Some(new_layout);
     dock_placement.behind_start = behind_start;
+    dock_placement.effects_position = None;
     if !new_layout.has_content {
         unsafe {
             ShowWindow(hwnd, SW_HIDE);
         }
+        hide_dock_effects(&app, &mut dock_placement);
         dock_placement.hide_at = None;
         dock_placement.revealed = false;
         let _ = app.emit_to("dock", "dock-revealed", false);
@@ -762,7 +841,7 @@ fn apply_dock_region(hwnd: HWND, layout: DockLayout, expanded: bool) -> Result<(
             };
             CreateRoundRectRgn(
                 (x - left).max(0),
-                (y - top).max(0),
+                (y - top.max(layout.snow_headroom)).max(0),
                 (x + layout.body.width + right).min(layout.window.width),
                 (y + layout.body.height + bottom).min(layout.window.height),
                 layout.corner,
@@ -778,6 +857,148 @@ fn apply_dock_region(hwnd: HWND, layout: DockLayout, expanded: bool) -> Result<(
         }
     }
     Ok(())
+}
+
+fn dock_effects_bounds(layout: DockLayout) -> Bounds {
+    let frame = layout.window;
+    let monitor = layout.monitor;
+    let reach = (72.0 * layout.scale).round() as i32;
+    let left = (frame.left - reach).max(monitor.left);
+    let right = (frame.left + frame.width + reach).min(monitor.left + monitor.width);
+    let top = (frame.top - reach).max(monitor.top);
+    let bottom = (frame.top + frame.height + reach).min(monitor.top + monitor.height);
+    Bounds {
+        left,
+        top,
+        width: (right - left).max(1),
+        height: (bottom - top).max(1),
+    }
+}
+
+#[tauri::command]
+async fn prepare_dock_effects(app: AppHandle, source: WebviewWindow) -> Result<(), String> {
+    if source.label() != "dock" {
+        return Err("Only the dock can prepare its effects.".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let effects = app.state::<DockEffectsWindow>();
+        let _guard = effects.0.lock().map_err(|error| error.to_string())?;
+        let surface = match app.get_webview_window("dock-effects") {
+            Some(surface) => surface,
+            None => {
+                let config = app
+                    .config()
+                    .app
+                    .windows
+                    .iter()
+                    .find(|window| window.label == "dock-effects")
+                    .ok_or("The dock effects window is unavailable.")?;
+                WebviewWindowBuilder::from_config(&app, config)
+                    .and_then(|builder| builder.build())
+                    .map_err(|error| error.to_string())?
+            }
+        };
+        let hwnd = handle(&surface)? as usize;
+        app.run_on_main_thread(move || suppress_frame(hwnd as HWND, true))
+            .map_err(|error| error.to_string())?;
+        surface
+            .set_ignore_cursor_events(true)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+fn hide_dock_effects(app: &AppHandle, state: &mut DockPlacement) {
+    if state.effects.take().is_some() {
+        if let Ok(hwnd) = window(app, "dock-effects").and_then(|surface| handle(&surface)) {
+            unsafe { ShowWindow(hwnd, SW_HIDE) };
+        }
+        let _ = app.emit_to(
+            "dock-effects",
+            "dock-effects-changed",
+            Option::<DockEffectScene>::None,
+        );
+    }
+    state.effects_position = None;
+}
+
+#[tauri::command]
+fn read_dock_effects(placement: State<'_, Placement>) -> Option<DockEffectScene> {
+    placement.0.lock().ok()?.effects.clone()
+}
+
+#[tauri::command]
+fn update_dock_effects(
+    app: AppHandle,
+    source: WebviewWindow,
+    placement: State<'_, Placement>,
+    opacity: Option<f64>,
+) -> Result<(), String> {
+    if source.label() != "dock" {
+        return Err("Only the dock can update its effects.".into());
+    }
+    let settings = app.state::<DockStore>().current();
+    let dock_hwnd = handle(&source)?;
+    let mut state = placement.0.lock().map_err(|error| error.to_string())?;
+    let Some((layout, opacity)) = state.layout.zip(opacity).filter(|(layout, _)| {
+        layout.has_content && settings.dock_snow && unsafe { IsWindowVisible(dock_hwnd) } != 0
+    }) else {
+        hide_dock_effects(&app, &mut state);
+        return Ok(());
+    };
+    let bounds = dock_effects_bounds(layout);
+    let position = (bounds, state.behind_start);
+    if state.effects_position != Some(position) {
+        let effects = handle(&window(&app, "dock-effects")?)?;
+        let band = if state.behind_start {
+            HWND_NOTOPMOST
+        } else {
+            HWND_TOPMOST
+        };
+        let preposition = SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE;
+        let ready = unsafe {
+            if SetWindowPos(effects, band, 0, 0, 0, 0, preposition) == 0 {
+                false
+            } else {
+                // Insert immediately above the dock, below any open preview windows.
+                let above = GetWindow(dock_hwnd, GW_HWNDPREV);
+                let flags = SWP_NOACTIVATE | SWP_SHOWWINDOW;
+                let (after, flags) = if above == effects {
+                    (effects, flags | SWP_NOZORDER)
+                } else if above.is_null() {
+                    (band, flags)
+                } else {
+                    (above, flags)
+                };
+                SetWindowPos(
+                    effects,
+                    after,
+                    bounds.left,
+                    bounds.top,
+                    bounds.width,
+                    bounds.height,
+                    flags,
+                ) != 0
+            }
+        };
+        if !ready {
+            return Err("Windows couldn’t position the dock effects.".into());
+        }
+        state.effects_position = Some(position);
+    }
+    let scene = DockEffectScene {
+        opacity: opacity.clamp(0.0, 1.0),
+        offset_x: f64::from(layout.window.left - bounds.left) / layout.scale,
+        offset_y: f64::from(layout.window.top - bounds.top) / layout.scale,
+    };
+    if state.effects.as_ref() == Some(&scene) {
+        return Ok(());
+    }
+    state.effects = Some(scene.clone());
+    drop(state);
+    app.emit_to("dock-effects", "dock-effects-changed", scene)
+        .map_err(|error| error.to_string())
 }
 
 fn set_revealed(
@@ -868,6 +1089,7 @@ fn track_dock(app: &AppHandle, cursor: POINT, popup_open: bool) {
         }
         state.revealed = false;
         state.hide_at = None;
+        hide_dock_effects(app, &mut state);
         return;
     }
     if !settings.auto_hide {
@@ -935,6 +1157,7 @@ fn track_dock(app: &AppHandle, cursor: POINT, popup_open: bool) {
             ShowWindow(hwnd, SW_HIDE);
         }
         state.hide_at = None;
+        hide_dock_effects(app, &mut state);
     }
 }
 
@@ -1101,6 +1324,7 @@ pub fn run(dock_only: bool) {
         .manage(WidgetDrag::default())
         .manage(OpenFolder::default())
         .manage(Placement::default())
+        .manage(DockEffectsWindow::default())
         .manage(PreviousForeground::default())
         .manage(SettingsWindow::default())
         .setup(move |app| {
@@ -1108,7 +1332,7 @@ pub fn run(dock_only: bool) {
             app.manage(AppCatalog::load(app.handle())?);
             app.manage(WidgetContentStore::new(app.path().app_config_dir()?));
             for config in &app.config().app.windows {
-                if dock_only && config.label == "settings" {
+                if config.label == "dock-effects" || (dock_only && config.label == "settings") {
                     continue;
                 }
                 let surface = WebviewWindowBuilder::from_config(app, config)?.build()?;
@@ -1201,6 +1425,10 @@ pub fn run(dock_only: bool) {
             quit_spacebar,
             place_dock,
             set_dock_expanded,
+            prepare_dock_effects,
+            read_dock_effects,
+            update_dock_effects,
+            crate::surface_snow::set_surface_snow,
             previews::show_window_previews,
             previews::move_window_previews,
             previews::hide_window_previews,

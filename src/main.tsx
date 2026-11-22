@@ -12,6 +12,7 @@ import { version } from '../package.json';
 import { ColorPicker } from './ColorPicker';
 import { appIconStyle } from './AppIcon';
 import { DemoDock, DesktopDock } from './Dock';
+import { DesktopDockEffects } from './DockEffects';
 import { DockContextMenu, DragPreview } from './DockOverlays';
 import { WindowPreview } from './WindowPreview';
 import { FolderPanel } from './FolderPanel';
@@ -19,6 +20,7 @@ import { WidgetLibrary, WidgetsSidebar, type WidgetSection } from './WidgetLibra
 import { SystemPanel } from './SystemPanel';
 import { WidgetPopup } from './SpotifyWidgets';
 import { SavedDocksPage } from './SavedDocksPage';
+import { SurfaceSnow } from './SurfaceSnow';
 import { UpdateNotice } from './UpdateNotice';
 import { editSavedDocks, type SavedDockEdit } from './savedDocks';
 import { allWidgets, initialWidgets, useWidgets } from './widgets';
@@ -348,6 +350,7 @@ function SettingsApp() {
       '--app-tint-strength': appearance.tintAmount / 100,
       '--on-accent': contrastingInk(appearance.tintColor), '--dock-tint': settings.tintColor } as CSSProperties}>
     <header className="titlebar" data-tauri-drag-region>
+      {settings.dockSnow && <SurfaceSnow theme={appearance.theme} />}
       <span className="brand" data-tauri-drag-region><img className="brand-icon" src={spacebarIcon} alt="" />Spacebar</span>
       <span className="title-divider" /><span className="window-label" data-tauri-drag-region>Settings</span>
       {native && <div className="window-actions">
@@ -484,6 +487,10 @@ function SettingsApp() {
                 </div>
               </div>
             </section>
+            <section className="setting-group" aria-labelledby="dock-effects"><h2 id="dock-effects">Effects</h2><div className="settings-list">
+              <Toggle label="Snow" detail="Let snow settle on the dock, menus, popups, and Settings"
+                checked={settings.dockSnow} onChange={(value) => update('dockSnow', value)} />
+            </div></section>
             <section className="setting-group" aria-labelledby="visibility"><h2 id="visibility">Dock visibility</h2><div className="settings-list">
               <Toggle label="Replace Windows taskbar" detail="Show Spacebar while it’s running" checked={settings.replaceTaskbar} onChange={(value) => update('replaceTaskbar', value)} />
               {allWidgets(items).some((item) => item.kind === 'spacebar-start') &&
@@ -512,6 +519,7 @@ const surface = new URLSearchParams(location.search).get('surface');
 document.documentElement.dataset.surface = surface ?? 'settings';
 
 createRoot(document.getElementById('root')!).render(surface === 'dock' && desktop ? <DesktopDock />
+  : surface === 'dock-effects' && desktop ? <DesktopDockEffects />
   : surface === 'preview' ? <WindowPreview /> : surface === 'peek' ? null
   : surface === 'folder' && desktop ? <FolderPanel />
   : surface === 'context' && desktop ? <DockContextMenu />

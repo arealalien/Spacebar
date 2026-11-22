@@ -4,6 +4,7 @@ import { ArrowUpFromLine, FolderOpen, Plus } from 'lucide-react';
 import { useEffect, useState, type CSSProperties } from 'react';
 import { AppIcon, appIconStyle, DockAppIcon, NotificationBadge, notificationLabel } from './AppIcon';
 import { appMenuTarget, middleClick, openDockMenu, widgetMenuTarget } from './DockOverlays';
+import { SurfaceSnow } from './SurfaceSnow';
 import { WidgetFace } from './WidgetFaces';
 import { useDockApps } from './useDockApps';
 import { useSurfacePayload } from './useSurfacePayload';
@@ -83,6 +84,7 @@ export function FolderPanel() {
   return <main className="folder-panel" data-material={settings.material} style={{ ...appIconStyle(settings), '--dock-tint': settings.tintColor } as CSSProperties} onKeyDown={(event) => {
     if (event.key === 'Escape') void invoke('close_folder').catch(report);
   }}>
+    {id && settings.dockSnow && <SurfaceSnow />}
     <header className="folder-header"><FolderOpen size={20} />
       <input aria-label="Folder name" value={name} maxLength={48} onChange={(event) => setName(event.currentTarget.value)} onBlur={saveName}
         onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} />

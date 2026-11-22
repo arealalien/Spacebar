@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProp
 import { useHoverPopup, type HoverPopupKind } from './HoverPopup';
 import { defaults, desktop, type Settings } from './model';
 import { PlaybackControls, type MediaAction, type PlaybackState } from './PlaybackControls';
+import { SurfaceSnow } from './SurfaceSnow';
 import { useSurfacePayload } from './useSurfacePayload';
 import { isWeatherKind, type SpotifyKind } from './widgetCatalog';
 import { widgetSnapshot } from './widgetSnapshots';
@@ -354,7 +355,7 @@ export function WidgetPopup() {
   const popup = useSurfacePayload<WidgetPopupDetails>('widget-popup-changed', 'read_widget_popup');
   const weatherKind = popup && isWeatherKind(popup.kind) ? popup.kind : undefined;
   const cleanWeather = weatherKind === 'weather';
-  const settings = useSurfacePayload<Settings>('settings-changed', 'read_settings', cleanWeather) ?? defaults;
+  const settings = useSurfacePayload<Settings>('settings-changed', 'read_settings') ?? defaults;
   const panel = useRef<HTMLElement>(null);
   const reveal = useRef(0);
   const [error, setError] = useState('');
@@ -408,6 +409,7 @@ export function WidgetPopup() {
   }, [popup, close, onError]);
 
   if (!popup) return null;
+  const showSnow = settings.dockSnow && !popup.closing;
   const frame = {
     'data-edge': popup.edge,
     'data-closing': popup.closing,
@@ -419,9 +421,10 @@ export function WidgetPopup() {
     const weatherFrame = cleanWeather ? {
       ...frame, 'data-material': settings.material, style: { '--dock-tint': settings.tintColor } as CSSProperties,
     } : frame;
-    return <WeatherPanel kind={weatherKind} frame={weatherFrame} keyboard={popup.keyboard} error={error} onError={onError} />;
+    return <WeatherPanel kind={weatherKind} frame={weatherFrame} keyboard={popup.keyboard} snow={showSnow} error={error} onError={onError} />;
   }
   return <main {...frame} className="spotify-player spotify-popup widget-popup-motion" role="dialog" aria-label="Spotify playback">
+    {showSnow && <SurfaceSnow />}
     <SpotifyPlayerContent onError={onError} onOpened={close} />
     {error && <p className="spotify-popup-error" role="alert" title={error}>{error}</p>}
   </main>;

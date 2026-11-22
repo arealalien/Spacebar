@@ -2,6 +2,7 @@ import { Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudMoon, CloudRain, Cl
 import { useEffect, useRef, useState, type ComponentPropsWithRef } from 'react';
 import { AmbientSky } from './AmbientSky';
 import { useHoverPopup } from './HoverPopup';
+import { SurfaceSnow } from './SurfaceSnow';
 import { useSurfacePayload } from './useSurfacePayload';
 import { widgetNames, type WeatherKind } from './widgetCatalog';
 import { degrees, findWeatherLocations, useForecast, type Forecast } from './weather';
@@ -280,8 +281,8 @@ function ColorfulWeather({ forecast, condition, location, fahrenheit, saving, on
   </>;
 }
 
-export function WeatherPanel({ kind, frame, keyboard, error, onError }: {
-  kind: WeatherKind; frame: ComponentPropsWithRef<'main'>; keyboard: boolean; error: string;
+export function WeatherPanel({ kind, frame, keyboard, snow, error, onError }: {
+  kind: WeatherKind; frame: ComponentPropsWithRef<'main'>; keyboard: boolean; snow: boolean; error: string;
   onError: (error: unknown) => void;
 }) {
   const { value, setValue, loading } = useWidgetContent('weather', onError);
@@ -314,6 +315,7 @@ export function WeatherPanel({ kind, frame, keyboard, error, onError }: {
     role: 'dialog', 'aria-label': widgetNames[kind],
     'data-weather-design': design, 'data-sky': condition.sky, 'data-daylight': current?.is_day === 0 ? 'night' : 'day',
   };
+  const snowRim = snow && <SurfaceSnow />;
   const alert = error && <p className="system-panel-error" role="alert" title={error}>{error}</p>;
   const retryNotice = failed && <div className="weather-retry">
     <p className="utility-message" role="status">{forecast ? 'Couldn’t refresh the forecast. Showing the last update.' : 'Couldn’t load the forecast.'}</p>
@@ -324,6 +326,7 @@ export function WeatherPanel({ kind, frame, keyboard, error, onError }: {
     const temperature = degrees(current?.temperature_2m, fahrenheit);
     const switchUnits = `Switch to ${fahrenheit ? 'Celsius' : 'Fahrenheit'}`;
     return <main {...panel} data-ambient-scene="true">
+      {snowRim}
       <AmbientSky location={location} />
       <header className="ambient-weather-heading">
         <div>
@@ -348,6 +351,7 @@ export function WeatherPanel({ kind, frame, keyboard, error, onError }: {
 
   if (design === 'colorful' && location && !editing && forecast) {
     return <main {...panel}>
+      {snowRim}
       <div className="system-panel-body colorful-weather-body">
         <ColorfulWeather forecast={forecast} condition={condition} location={location} fahrenheit={fahrenheit} saving={saving}
           onLocation={() => setEditing(true)} onUnits={() => void save({ location, fahrenheit: !fahrenheit })} />
@@ -358,6 +362,7 @@ export function WeatherPanel({ kind, frame, keyboard, error, onError }: {
   }
 
   return <main {...panel}>
+    {snowRim}
     <header className="system-panel-header weather-header" data-weather-design={design}>
       {design === 'clean' && <CloudSun size={19} aria-hidden="true" />}
       <h1>{selecting || !location ? 'Weather' : location.name}</h1>

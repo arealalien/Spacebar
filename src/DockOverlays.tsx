@@ -3,6 +3,7 @@ import { Check, CircleMinus, LayoutGrid, LogOut, Pin, Settings2, Square, SquareX
 import { useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
 import { AppIcon, appIconStyle, DockAppIcon } from './AppIcon';
 import { ColorPicker } from './ColorPicker';
+import { SurfaceSnow } from './SurfaceSnow';
 import { WidgetSpecimen } from './WidgetFaces';
 import { useDockApps } from './useDockApps';
 import { useSurfacePayload } from './useSurfacePayload';
@@ -97,6 +98,7 @@ function WidgetColorControls({ name, label, defaultColor, color, onChange }: {
 
 export function DockContextMenu() {
   const target = useSurfacePayload<MenuTarget>('context-menu-opened', 'read_context_menu');
+  const settings = useSurfacePayload<Settings>('settings-changed', 'read_settings');
   const { items } = useWidgets();
   const widgetTarget = target?.type === 'widget' ? target : undefined;
   const widget = widgetTarget ? allWidgets(items).find((item) => item.id === widgetTarget.id) : undefined;
@@ -124,6 +126,7 @@ export function DockContextMenu() {
       : event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : -1;
     if (next >= 0) { event.preventDefault(); buttons[next].focus(); }
   }}>
+    {settings?.dockSnow && <SurfaceSnow />}
     <button type="button" role={actionRole} onClick={() => void run(() => invoke('open_settings', { widgets: true }))}><LayoutGrid size={15} />Widgets</button>
     <button type="button" role={actionRole} onClick={() => void run(() => invoke('open_settings'))}><Settings2 size={15} />Settings</button>
     {target.type === 'app' && <div className="dock-context-launch">
