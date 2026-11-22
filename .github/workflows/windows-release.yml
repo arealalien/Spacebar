@@ -1,0 +1,73 @@
+name: Publish Spacebar for Windows
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+
+jobs:
+  release:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Verify release versions
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tauriVersion = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $cargoVersion = (Select-String -Path src-tauri/Cargo.toml -Pattern '^version = "([^"]+)"$').Matches[0].Groups[1].Value
+          if ($version -notmatch '^\d+\.\d+\.\d+$' -or $tauriVersion -ne $version -or $cargoVersion -ne $version -or $env:GITHUB_REF_NAME -ne "v$version") {
+            throw 'The tag must match the stable version in package.json, tauri.conf.json, and Cargo.toml.'
+          }
+          "SPACEBAR_RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+      - run: npm ci
+      - name: Build signed installer
+        run: npm run release:build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Publish release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $version = $env:SPACEBAR_RELEASE_VERSION
+          $installerName = "Spacebar_${version}_x64-setup.exe"
+          $installer = Join-Path 'src-tauri/target/release/bundle/nsis' $installerName
+          $signature = (Get-Content "$installer.sig" -Raw).Trim()
+
+          $releaseJson = gh release view $tag --json isDraft,databaseId 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --draft --verify-tag --generate-notes
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create a draft release.' }
+            $releaseJson = gh release view $tag --json isDraft,databaseId
+            if ($LASTEXITCODE -ne 0) { throw 'Could not find the draft release.' }
+          }
+          $release = $releaseJson | ConvertFrom-Json
+          if (-not $release.isDraft) { throw 'This version is already published. Use a new version.' }
+
+          gh release upload $tag $installer "$installer.sig" --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Could not upload the installer and signature.' }
+          $assets = gh api "repos/$env:GITHUB_REPOSITORY/releases/$($release.databaseId)/assets" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read the uploaded assets.' }
+          $asset = $assets | Where-Object { $_.name -eq $installerName -and $_.state -eq 'uploaded' }
+          if (-not $asset) { throw 'Could not find the uploaded installer.' }
+
+          @{ version = $version; url = $asset.url; signature = $signature } |
+            ConvertTo-Json -Compress | Set-Content -Path latest.json -Encoding utf8NoBOM
+          gh release upload $tag latest.json --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Could not upload the update manifest.' }
+          gh release edit $tag --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Could not publish the release.' }

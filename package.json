@@ -1,0 +1,28 @@
+{
+  "name": "spacebar",
+  "version": "0.6.6",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "tauri": "node scripts/tauri.mjs",
+    "release:build": "npm run tauri build -- --config src-tauri/tauri.release.conf.json"
+  },
+  "dependencies": {
+    "@fontsource-variable/bricolage-grotesque": "^5",
+    "@fontsource-variable/dm-sans": "^5",
+    "@tauri-apps/api": "^2",
+    "lucide-react": "^0.577.0",
+    "react": "^19",
+    "react-dom": "^19"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^5",
+    "typescript": "~5.9.3",
+    "vite": "^7"
+  }
+}

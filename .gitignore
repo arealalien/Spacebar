@@ -1,0 +1,14 @@
+node_modules/
+dist/
+target/
+src-tauri/gen/schemas/
+src-tauri/logs/
+.toolchain/
+.cache/
+releases/
+.idea/
+*.key
+*.pem
+.env
+.env.*
+*.log

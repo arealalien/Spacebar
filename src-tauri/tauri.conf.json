@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Spacebar",
+  "version": "0.6.6",
+  "identifier": "app.spacebar.dock",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      { "label": "settings", "create": false, "title": "Spacebar Settings", "width": 1120, "height": 790, "minWidth": 660, "minHeight": 520, "center": true, "decorations": false, "backgroundColor": "#15141d" },
+      { "label": "dock", "create": false, "url": "index.html?surface=dock", "title": "Spacebar Dock", "width": 460, "height": 148, "visible": false, "decorations": false, "resizable": false, "shadow": false, "transparent": true, "skipTaskbar": true, "alwaysOnTop": true, "focus": false },
+      { "label": "preview", "create": false, "url": "index.html?surface=preview", "title": "Spacebar Window Preview", "width": 274, "height": 180, "visible": false, "decorations": false, "resizable": false, "shadow": false, "skipTaskbar": true, "alwaysOnTop": true, "focus": false, "focusable": false, "transparent": true },
+      { "label": "peek", "create": false, "url": "index.html?surface=peek", "title": "Spacebar Full Window Preview", "visible": false, "decorations": false, "resizable": false, "shadow": false, "skipTaskbar": true, "alwaysOnTop": true, "focus": false, "focusable": false, "backgroundColor": "#101018" },
+      { "label": "folder", "create": false, "url": "index.html?surface=folder", "title": "Spacebar Folder", "width": 440, "height": 370, "visible": false, "decorations": false, "resizable": false, "shadow": false, "transparent": true, "skipTaskbar": true, "alwaysOnTop": true, "focus": false },
+      { "label": "context", "create": false, "url": "index.html?surface=context", "title": "Spacebar Dock Menu", "width": 218, "height": 179, "visible": false, "decorations": false, "resizable": false, "shadow": false, "skipTaskbar": true, "alwaysOnTop": true, "focus": false, "transparent": true },
+      { "label": "system", "create": false, "url": "index.html?surface=system", "title": "Spacebar System Panel", "width": 300, "height": 244, "visible": false, "decorations": false, "resizable": false, "shadow": false, "skipTaskbar": true, "alwaysOnTop": true, "focus": false, "transparent": true },
+      { "label": "widget-popup", "create": false, "url": "index.html?surface=widget-popup", "title": "Spacebar Widget Popup", "width": 352, "height": 282, "visible": false, "decorations": false, "resizable": false, "shadow": false, "skipTaskbar": true, "alwaysOnTop": true, "focus": false, "transparent": true },
+      { "label": "drag", "create": false, "url": "index.html?surface=drag", "title": "Spacebar Drag Preview", "width": 120, "height": 66, "visible": false, "decorations": false, "resizable": false, "shadow": false, "skipTaskbar": true, "alwaysOnTop": true, "focus": false, "focusable": false, "transparent": true }
+    ],
+    "security": { "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost https://api.open-meteo.com https://geocoding-api.open-meteo.com" }
+  },
+  "bundle": { "active": true, "targets": ["nsis"], "icon": ["icons/icon.ico", "icons/icon.png"] },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhEOUI0RjA3MkVEMDY0OEMKUldTTVpOQXVCMCtiamRzcTJYQnFxa0xKMkVKSFBuMTRUMUkwalVVeFdWeWRBcjZ3ZTY2TXZzYVQK",
+      "requireSignedVersion": true,
+      "windows": { "installMode": "passive" }
+    }
+  }
+}

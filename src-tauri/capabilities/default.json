@@ -1,0 +1,6 @@
+{
+  "identifier": "spacebar-windows",
+  "description": "Window controls for Spacebar's local desktop surfaces",
+  "windows": ["settings", "dock", "folder", "context", "drag", "system"],
+  "permissions": ["core:default", "core:window:allow-start-dragging", "core:window:allow-minimize", "core:window:allow-toggle-maximize", "core:window:allow-close"]
+}
