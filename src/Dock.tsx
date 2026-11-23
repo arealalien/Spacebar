@@ -43,6 +43,7 @@ function dockMetrics(settings: Settings, items: WidgetItem[], count: number, ava
     if (kind === 'divider') return 8 * scale;
     if (isStartWidget(kind)) return size * scale;
     const height = cardHeight(item);
+    if (kind === 'image') return height * (vertical ? 1 : item.image?.crop.ratio ?? 1);
     if (isSquare(kind)) return height;
     if (vertical) return isSpotifyKind(kind) || kind === 'network'
       ? Math.max(65 * scale, height * 1.22) : height;
@@ -64,6 +65,7 @@ function dockMetrics(settings: Settings, items: WidgetItem[], count: number, ava
     const { kind } = item;
     if (isStartWidget(kind)) return widgetLength(item) * factor;
     const height = cardHeight(item) * factor;
+    if (kind === 'image') return height * (vertical ? item.image?.crop.ratio ?? 1 : 1);
     if (!vertical || isSquare(kind)) return height;
     const scale = widgetScale(item.size);
     if (kind === 'spotify') return Math.max(96 * scale, 112 * scale * factor, height);
@@ -223,7 +225,8 @@ export function Dock({ settings, apps, allApps, items, drag, preview = false, ed
   const positions = useRef(new Map<string, number>());
   const priorOrder = useRef('');
   const clickedApp = useRef<string>(undefined);
-  const resting = !!drag || editing || contextOpen;
+  const visible = preview ? !settings.autoHide || demoVisible : revealed;
+  const resting = !visible || !!drag || editing || contextOpen;
   const hoverId = overSettings || resting ? undefined : hover?.id;
   const hovered = apps.find((app) => app.id === hoverId);
   const windowSignature = hovered?.windows.length ? JSON.stringify(hovered.windows) : '';
@@ -233,7 +236,6 @@ export function Dock({ settings, apps, allApps, items, drag, preview = false, ed
   const zoom = settings.magnify && motionAllowed ? settings.zoom : 1;
   const room = Math.max(0, usable - width);
   const motion = magnification(apps.length, resting ? undefined : hover?.position, iconSize, zoom, settings.falloff, room, room / 2, settings.alignment);
-  const visible = !settings.autoHide || (preview ? demoVisible : revealed);
   const playingClick = motionAllowed && visible && !resting && clickPulse?.effect === settings.appIconClickEffect ? clickPulse : undefined;
   const expanded = (hover !== undefined && !resting) || playingClick?.effect === 'stars' || playingClick?.effect === 'bounce';
   const hasDock = width > 0 || !!drag;
@@ -267,6 +269,14 @@ export function Dock({ settings, apps, allApps, items, drag, preview = false, ed
   useEffect(() => {
     if (drag?.finished) onDrop?.(drag, !drag.cancelled && drag.inside && body.current ? dropTarget(body.current, drag, vertical) : undefined);
   }, [drag]);
+
+  useEffect(() => {
+    if (visible) return;
+    clickedApp.current = undefined;
+    setOverSettings(false);
+    setHover(undefined);
+    setClickPulse(undefined);
+  }, [visible]);
 
   useEffect(() => {
     const query = matchMedia('(prefers-reduced-motion: reduce)');
@@ -494,11 +504,13 @@ export function DesktopDock() {
     let disposed = false;
     let changed = false;
     const unlisten = subscribeSettings((value) => { changed = true; if (!disposed) setSettings(value); });
-    const revealListener = listen<boolean>('dock-revealed', ({ payload }) => { if (!disposed) setRevealed(payload); });
+    let revealChanged = false;
+    const revealListener = listen<boolean>('dock-revealed', ({ payload }) => { revealChanged = true; if (!disposed) setRevealed(payload); });
     const dragListener = listen<WidgetDrag>('widget-drag', ({ payload }) => { if (!disposed) setDrag(payload); });
     let editChanged = false;
     const editListener = listen<boolean>('widget-editing', ({ payload }) => { editChanged = true; if (!disposed) setEditing(payload); });
     const contextListener = listen<boolean>('context-menu-state', ({ payload }) => { if (!disposed) setContextOpen(payload); });
+    void revealListener.then(() => invoke<boolean>('read_dock_revealed')).then((value) => { if (!disposed && !revealChanged) setRevealed(value); }).catch(console.error);
     void editListener.then(() => invoke<boolean>('read_widget_editing')).then((value) => { if (!disposed && !editChanged) setEditing(value); }).catch(console.error);
     void unlisten.then(() => readSettings()).then((value) => { if (!changed && !disposed) setSettings(value); }).catch(console.error);
     return () => { disposed = true; window.clearTimeout(errorTimer.current); for (const listener of [unlisten, revealListener, dragListener, editListener, contextListener]) void listener.then((fn) => fn()).catch(console.error); };

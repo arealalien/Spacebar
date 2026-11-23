@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type CSSProperties, type MouseEvent, type 
 import { desktop, normalizeHexColor, settingsStorageKey, type DockApp } from './model';
 import { browserWidgetsChanged, dockStorageKey, readBrowserDock, writeBrowserDock } from './dockStorage';
 import { isLayoutWidget, isStartWidget, repeatableWidget, type WidgetKind } from './widgetCatalog';
+import type { ImageWidgetOptions } from './imageWidgetStorage';
 export { widgetNames, type WidgetKind } from './widgetCatalog';
 
 export interface WidgetItem extends Partial<AudioVisualizerOptions> {
@@ -20,6 +21,7 @@ export interface WidgetItem extends Partial<AudioVisualizerOptions> {
   size?: WidgetSize;
   color?: string;
   colors?: Partial<Record<WidgetColorChannel, string>>;
+  image?: ImageWidgetOptions;
 }
 
 type StoredWidgetItem = Omit<WidgetItem, 'kind' | 'children'> & {
@@ -56,7 +58,7 @@ export const minSpacerSize = 8;
 export const maxSpacerSize = 240;
 
 export function supportsWidgetSurface(kind: WidgetItem['kind']) {
-  return !isStartWidget(kind) && !isLayoutWidget(kind);
+  return !isStartWidget(kind) && !isLayoutWidget(kind) && kind !== 'image';
 }
 
 export const supportsWidgetSize = (kind: WidgetItem['kind']) => kind !== 'app' && kind !== 'spacer';
@@ -100,7 +102,7 @@ const singleColorOption: readonly WidgetColorOption[] = [{ key: 'accent', label:
 const visualizerColor: readonly WidgetColorOption[] = [{ key: 'accent', label: 'Wave color', defaultColor: '#d7e5ff' }];
 
 export function widgetColorOptions(kind: WidgetItem['kind']): readonly WidgetColorOption[] {
-  if (kind === 'app' || kind === 'apps' || kind === 'spacer') return [];
+  if (kind === 'app' || kind === 'apps' || kind === 'spacer' || kind === 'image') return [];
   if (kind === 'audio-visualizer') return visualizerColor;
   return multiColorOptions[kind] ?? singleColorOption;
 }
@@ -189,6 +191,13 @@ export function resizeSpacer(items: WidgetItem[], id: string, size: number) {
   if (!Number.isFinite(size)) return items;
   const spacerSize = Math.min(maxSpacerSize, Math.max(minSpacerSize, Math.round(size)));
   return updateWidget(items, id, (item) => item.kind === 'spacer' && (item.spacerSize ?? defaultSpacerSize) !== spacerSize ? { ...item, spacerSize } : item);
+}
+
+export function configureImageWidget(items: WidgetItem[], id: string | undefined, image: ImageWidgetOptions) {
+  if (!id) return [...items, { id: crypto.randomUUID(), kind: 'image', image } satisfies WidgetItem];
+  const next = updateWidget(items, id, (item) => item.kind === 'image' ? { ...item, image } : item);
+  if (next === items) throw new Error('This image widget is no longer on the dock.');
+  return next;
 }
 
 export function dockPopupAnchor(element: HTMLElement) {

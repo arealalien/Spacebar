@@ -1,10 +1,107 @@
 use serde::Serialize;
-use std::{sync::Mutex, time::Duration};
-use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+    sync::Mutex,
+    time::Duration,
+};
+use tauri::{AppHandle, Emitter, Manager, State, Url, WebviewWindow};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 const UPDATE_EVENT: &str = "spacebar-update";
 const RELEASES_URL: &str = "https://github.com/arealalien/Spacebar/releases";
+const RELEASE_NOTES: &str = include_str!(concat!(env!("OUT_DIR"), "/release-notes.md"));
+
+#[derive(Serialize)]
+pub(crate) struct WhatsNew {
+    version: String,
+    notes: &'static str,
+    url: String,
+}
+
+fn update_marker(app: &AppHandle) -> tauri::Result<PathBuf> {
+    Ok(app.path().app_config_dir()?.join("whats-new-version"))
+}
+
+fn matches_update(path: &Path, version: &str) -> io::Result<bool> {
+    match fs::read_to_string(path) {
+        Ok(marker) => Ok(marker.trim() == version),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_matching_update_marker_enables_release_notes() {
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("whats-new-version");
+        assert!(!matches_update(&marker, "1.2.0").unwrap());
+        fs::write(&marker, "1.1.0").unwrap();
+        assert!(!matches_update(&marker, "1.2.0").unwrap());
+        fs::write(&marker, "1.2.0\r\n").unwrap();
+        assert!(matches_update(&marker, "1.2.0").unwrap());
+    }
+}
+
+#[tauri::command]
+pub(crate) fn read_whats_new(window: WebviewWindow) -> Option<WhatsNew> {
+    if window.label() != "settings" {
+        return None;
+    }
+    let app = window.app_handle();
+    let version = app.package_info().version.to_string();
+    matches_update(&update_marker(app).ok()?, &version)
+        .ok()?
+        .then(|| WhatsNew {
+            url: format!("{RELEASES_URL}/tag/v{version}"),
+            version,
+            notes: RELEASE_NOTES.trim(),
+        })
+}
+
+#[tauri::command]
+pub(crate) fn dismiss_whats_new(window: WebviewWindow) -> Result<(), String> {
+    if window.label() != "settings" {
+        return Err("Open Spacebar Settings to dismiss the release notes.".into());
+    }
+    let app = window.app_handle();
+    let marker = update_marker(app).map_err(|error| error.to_string())?;
+    if matches_update(&marker, &app.package_info().version.to_string())
+        .map_err(|error| error.to_string())?
+    {
+        fs::remove_file(marker)
+            .or_else(|error| {
+                if error.kind() == io::ErrorKind::NotFound {
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            })
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn open_release_notes_link(window: WebviewWindow, url: Url) -> Result<(), String> {
+    if window.label() != "settings"
+        || !matches!(url.scheme(), "https" | "http")
+        || url.host().is_none()
+    {
+        return Err("This release note link is unavailable.".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::apps::launch_file(Path::new(url.as_str()), None)
+            .then_some(())
+            .ok_or_else(|| "Couldn’t open the release note link.".into())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
 
 #[derive(Default)]
 pub(crate) struct Updates(Mutex<Option<Pending>>);

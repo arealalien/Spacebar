@@ -19,15 +19,19 @@ function FolderEntry({ item, apps, ungroupedApps, settings, onError }: {
   const drag = useWidgetDrag({ type: 'item', id: item.id });
   const app = item.kind === 'app' ? apps.find((app) => app.id === item.appId) : undefined;
   const name = app?.name ?? item.name ?? widgetNames[item.kind as WidgetKind] ?? 'App';
-  const wide = item.kind !== 'app' && (widgetCatalog[item.kind].width >= 140 || item.kind === 'apps');
+  const imageRatio = item.image?.crop.ratio ?? 1;
+  const wide = item.kind !== 'app' && (widgetCatalog[item.kind].width >= 140 || item.kind === 'apps' || imageRatio > 1);
   const scale = widgetScale(item.size);
   const faceStyle = {
     ...widgetColorStyle(item), '--folder-widget-height': `${48 * scale}px`,
     '--folder-app-size': `${40 * scale}px`, '--widget-unit': `${38 * scale}px`,
+    '--image-ratio': imageRatio,
   } as CSSProperties;
   return <div className={`folder-entry folder-entry-${item.kind}${wide ? ' folder-entry-wide' : ''}`} {...drag} onContextMenu={(event) => openDockMenu(event,
     item.kind === 'app' ? appMenuTarget(app ?? { id: item.appId ?? '', name, icon: item.icon }, item.id) : widgetMenuTarget(item), onError)}>
-    <div className="folder-entry-face" style={faceStyle} data-square={item.kind !== 'app' && item.kind !== 'apps' && widgetCatalog[item.kind].width === 0} {...widgetAppearance(item)}>
+    <div className="folder-entry-face" style={faceStyle}
+      data-square={item.kind !== 'app' && item.kind !== 'apps' && item.kind !== 'image' && widgetCatalog[item.kind].width === 0}
+      {...widgetAppearance(item)}>
       {item.kind === 'app' ? <button className="folder-app" aria-label={`Open ${notificationLabel(name, app?.notification, badgeMode)}`} title={name} onClick={() => void invoke('launch_folder_app', { id: item.id }).catch(onError)}
         {...middleClick(() => void invoke('launch_folder_app', { id: item.id, newWindow: true }).catch(onError))}>
         <DockAppIcon app={app ?? { id: item.appId ?? '', icon: item.icon }} />

@@ -363,6 +363,9 @@ pub fn show_window_previews(
     app_id: String,
     anchor: PopupAnchor,
 ) -> Result<(), String> {
+    if crate::desktop::dock_suppressed(&app) {
+        return Ok(());
+    }
     let source = catalog.preview_source(&app_id)?;
     if source.windows.is_empty() {
         return Err("This app has no open windows.".into());

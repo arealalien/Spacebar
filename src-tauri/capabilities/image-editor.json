@@ -1,0 +1,6 @@
+{
+  "identifier": "spacebar-image-editor",
+  "description": "Window controls for the standalone image editor",
+  "windows": ["image-editor"],
+  "permissions": ["core:default", "core:window:allow-close", "core:window:allow-destroy"]
+}

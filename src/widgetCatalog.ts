@@ -13,6 +13,7 @@ export const widgetCatalog = {
   'day-progress': { name: 'Day progress', detail: 'A dot for each hour of the day', width: 126 },
   'quick-note': { name: 'Quick Note', detail: 'A scratchpad that saves as you type', width: 0 },
   'drawing-pad': { name: 'Drawing Pad', detail: 'Sketch with a brush and eraser', width: 0 },
+  image: { name: 'Image / GIF', detail: 'Crop a photo or animation to fit your dock', width: 0 },
   agenda: { name: 'Agenda', detail: 'See and manage upcoming events', width: 156 },
   'quick-tasks': { name: 'Quick Tasks', detail: 'Keep a checklist and see your next task on the dock', width: 150 },
   'color-picker': { name: 'Color Picker', detail: 'Pick a screen color and copy hex values from your history', width: 0 },
@@ -58,6 +59,6 @@ export const isSpotifyKind = (kind: string): kind is SpotifyKind => spotifyKinds
 export const isWeatherKind = (kind: string): kind is WeatherKind => weatherKinds.some((weather) => weather === kind);
 export const isLayoutWidget = (kind: string) => kind === 'spacer' || kind === 'divider';
 export const isStartWidget = (kind: string): kind is 'start' | 'spacebar-start' => kind === 'start' || kind === 'spacebar-start';
-export const repeatableWidget = (kind: WidgetKind) => kind === 'folder' || kind === 'clock-plain' || isLayoutWidget(kind);
+export const repeatableWidget = (kind: WidgetKind) => kind === 'folder' || kind === 'clock-plain' || kind === 'image' || isLayoutWidget(kind);
 
 export const widgetNames = Object.fromEntries(Object.entries(widgetCatalog).map(([kind, widget]) => [kind, widget.name])) as Record<WidgetKind, string>;

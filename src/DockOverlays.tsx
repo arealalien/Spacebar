@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { Check, CircleMinus, LayoutGrid, LogOut, Pin, Settings2, Square, SquareX, X } from 'lucide-react';
+import { Check, CircleMinus, Image as ImageIcon, LayoutGrid, LogOut, Pin, Settings2, Square, SquareX, X } from 'lucide-react';
 import { useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
 import { AppIcon, appIconStyle, DockAppIcon } from './AppIcon';
 import { ColorPicker } from './ColorPicker';
@@ -136,6 +136,9 @@ export function DockContextMenu() {
       </button>
     </div>}
     {widgetTarget && <div className="dock-context-target">{widgetTarget.name}</div>}
+    {widgetTarget?.kind === 'image' && <button type="button" onClick={() => void run(() => invoke('open_image_editor', { id: widgetTarget.id }))}>
+      <ImageIcon size={15} />Edit image
+    </button>}
     {widget && supportsWidgetSize(widget.kind) && <div className="context-widget-options" role="group" aria-labelledby="widget-size-label">
       <span id="widget-size-label">Size</span>
       <div className="context-size-options">

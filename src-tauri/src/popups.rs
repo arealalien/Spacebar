@@ -176,6 +176,7 @@ pub fn open_context_menu(
                     + if kind.supports_size() { 59.0 } else { 0.0 }
                     + 72.0 * kind.color_picker_count() as f64
                     + if *kind == crate::widgets::Kind::AudioVisualizer { 192.0 } else { 0.0 }
+                    + if *kind == crate::widgets::Kind::Image { 32.0 } else { 0.0 }
                     + if kind.supports_surface() { 64.0 } else { 0.0 },
             ),
             None => (246.0, 384.0),

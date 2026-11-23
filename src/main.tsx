@@ -4,24 +4,27 @@ import './style.css';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { AppWindow, Check, ChevronRight, CircleAlert, LayoutGrid, Maximize2, Minus, Monitor, Moon, Mouse, Palette, PanelBottom, RotateCcw, Save, Shapes, Sun, SunMoon, X, Zap } from 'lucide-react';
-import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { AppWindow, Check, ChevronRight, CircleAlert, LayoutGrid, Maximize2, Minus, Monitor, Moon, Mouse, Newspaper, Palette, PanelBottom, RotateCcw, Save, Shapes, Sun, SunMoon, X, Zap } from 'lucide-react';
+import { lazy, Suspense, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import spacebarIcon from '../icon-new.svg';
 import { version } from '../package.json';
 import { ColorPicker } from './ColorPicker';
 import { appIconStyle } from './AppIcon';
 import { DemoDock, DesktopDock } from './Dock';
+import { DockExclusions } from './DockExclusions';
 import { DesktopDockEffects } from './DockEffects';
 import { DockContextMenu, DragPreview } from './DockOverlays';
 import { WindowPreview } from './WindowPreview';
 import { FolderPanel } from './FolderPanel';
 import { WidgetLibrary, WidgetsSidebar, type WidgetSection } from './WidgetLibrary';
+import { ImageEditorWindow } from './ImageWidget';
 import { SystemPanel } from './SystemPanel';
 import { WidgetPopup } from './SpotifyWidgets';
 import { SavedDocksPage } from './SavedDocksPage';
 import { SurfaceSnow } from './SurfaceSnow';
 import { UpdateNotice } from './UpdateNotice';
+import type { InstalledReleaseNotes } from './WhatsNewPage';
 import { editSavedDocks, type SavedDockEdit } from './savedDocks';
 import { allWidgets, initialWidgets, useWidgets } from './widgets';
 import { accents, appAppearanceAmountRange, appIconBackgrounds, appIconClickEffects, appIconClickSpeedRange, contrastingInk, defaultAppAppearance, defaults, desktop, dockPaddingRange, normalizeHexColor, readAppAppearance, readSettings, verticalDock, writeAppAppearance, writeSettings, type AppAppearance, type Settings } from './model';
@@ -35,6 +38,7 @@ const sections = {
   saved: { label: 'Saved docks', icon: Save, description: 'Switch between your saved dock configurations.' },
 };
 type Section = keyof typeof sections;
+const WhatsNewPage = lazy(() => import('./WhatsNewPage'));
 
 const appThemes = [
   { value: 'system', label: 'System default', icon: Monitor },
@@ -224,7 +228,9 @@ function StartupSetting() {
 }
 
 function SettingsApp() {
-  const [tab, setTab] = useState<Section>('dock');
+  const [tab, setTab] = useState<Section | 'whats-new'>('dock');
+  const [release, setRelease] = useState<InstalledReleaseNotes>();
+  const [releaseDismiss, setReleaseDismiss] = useState({ pending: false, error: '' });
   const [widgetsOpen, setWidgetsOpen] = useState(false);
   const [widgetSection, setWidgetSection] = useState<WidgetSection>('all');
   const [widgetQuery, setWidgetQuery] = useState('');
@@ -243,8 +249,10 @@ function SettingsApp() {
   const draft = useRef(defaults);
   const appearanceRevision = useRef(0);
   const appearanceDraft = useRef(defaultAppAppearance);
+  const settingsNav = useRef<HTMLElement>(null);
   const settingsPage = useRef<HTMLElement>(null);
-  const section = sections[tab];
+  const section = sections[tab === 'whats-new' ? 'dock' : tab];
+  const releaseTitle = release ? 'What’s new in ' + release.version : '';
   const native = desktop ? getCurrentWindow() : undefined;
 
   useEffect(() => {
@@ -253,6 +261,15 @@ function SettingsApp() {
     void readAppAppearance().then((value) => { appearanceDraft.current = value; setAppearance(value); })
       .catch((error) => setAppearanceSave({ pending: false, error: String(error) }))
       .finally(() => setAppearanceLoaded(true));
+  }, []);
+
+  useEffect(() => {
+    if (!desktop) return;
+    let alive = true;
+    void invoke<InstalledReleaseNotes | null>('read_whats_new')
+      .then((notes) => { if (alive) setRelease(notes ?? undefined); })
+      .catch(console.error);
+    return () => { alive = false; };
   }, []);
 
   useLayoutEffect(() => {
@@ -319,6 +336,23 @@ function SettingsApp() {
     });
   }
 
+  async function dismissRelease(button: HTMLButtonElement) {
+    setReleaseDismiss({ pending: true, error: '' });
+    try {
+      await invoke('dismiss_whats_new');
+    } catch {
+      setReleaseDismiss({ pending: false, error: 'Couldn’t dismiss this tab. Try again.' });
+      return;
+    }
+    const focused = document.activeElement;
+    setRelease(undefined);
+    setTab((current) => current === 'whats-new' ? 'dock' : current);
+    setReleaseDismiss({ pending: false, error: '' });
+    if (focused === button || focused === document.body) {
+      window.requestAnimationFrame(() => settingsNav.current?.querySelector<HTMLButtonElement>('[aria-current="page"]')?.focus());
+    }
+  }
+
   async function editDock(edit: SavedDockEdit) {
     setSavingDock(true);
     try {
@@ -362,7 +396,17 @@ function SettingsApp() {
     <div className="workspace">
       <aside className={`sidebar${widgetsOpen ? ' widgets-sidebar' : ''}`}>
         {widgetsOpen ? <WidgetsSidebar onBack={() => setWidgetsOpen(false)} section={widgetSection} onSection={(id) => { setWidgetSection(id); setWidgetQuery(''); }}
-          query={widgetQuery} onQuery={(query) => { setWidgetQuery(query); setWidgetSection('all'); }} /> : <nav className="settings-nav" aria-label="Settings sections">
+          query={widgetQuery} onQuery={(query) => { setWidgetQuery(query); setWidgetSection('all'); }} /> : <nav ref={settingsNav} className="settings-nav" aria-label="Settings sections">
+          {release && <div className="release-tab">
+            <button type="button" className={tab === 'whats-new' ? 'nav-item selected' : 'nav-item'} data-section="whats-new"
+              disabled={savingDock} aria-current={tab === 'whats-new' ? 'page' : undefined} onClick={() => setTab('whats-new')}>
+              <Newspaper size={16} strokeWidth={1.8} aria-hidden="true" />
+              <span className="release-tab-label"><span>What’s new </span><small>in {release.version}</small></span>
+            </button>
+            <button type="button" className="release-tab-close" aria-label={'Dismiss ' + releaseTitle} title="Dismiss release notes"
+              disabled={releaseDismiss.pending} onClick={(event) => void dismissRelease(event.currentTarget)}><X size={15} aria-hidden="true" /></button>
+            {releaseDismiss.error && <p className="release-notes-error" role="alert">{releaseDismiss.error}</p>}
+          </div>}
           {(Object.keys(sections) as Section[]).map((id) => {
             const { icon: Icon, label } = sections[id];
             return <button key={id} className={`nav-item ${id === tab ? 'selected' : ''}`} data-section={id}
@@ -377,7 +421,11 @@ function SettingsApp() {
           <div className="sidebar-foot"><span className="platform-icon"><AppWindow size={15} /></span><div>Spacebar for Windows<span>Version {version}</span></div></div>
         </div>
       </aside>
-      {widgetsOpen ? <WidgetLibrary items={items} ready={widgetsReady} query={widgetQuery} selected={widgetSection} /> : <main ref={settingsPage} className="settings-page" id="settings" aria-busy={!pageLoaded}>
+      {widgetsOpen ? <WidgetLibrary items={items} ready={widgetsReady} query={widgetQuery} selected={widgetSection} />
+        : tab === 'whats-new' && release ? <main ref={settingsPage} className="settings-page" id="settings" aria-labelledby="release-title">
+          <div className="page-heading"><h1 id="release-title">{releaseTitle}</h1></div>
+          <Suspense fallback={<p role="status">Loading release notes…</p>}><WhatsNewPage release={release} /></Suspense>
+        </main> : <main ref={settingsPage} className="settings-page" id="settings" aria-busy={!pageLoaded}>
         <div className="page-heading"><div><h1>{section.label}</h1><p>{section.description}</p></div>
           {tab !== 'saved' && <button className="reset-button" disabled={!pageLoaded} onClick={() => {
             if (appAppearancePage) applyAppAppearance(defaultAppAppearance);
@@ -497,7 +545,10 @@ function SettingsApp() {
                 <Toggle label="Replace Windows Start menu" detail="Also use Spacebar Start for Windows Start buttons"
                   checked={settings.replaceWindowsStart} onChange={(value) => update('replaceWindowsStart', value)} />}
               <Toggle label="Hide settings icon" detail="Open Settings from the dock menu" checked={settings.hideSettingsIcon} onChange={(value) => update('hideSettingsIcon', value)} />
+              <Toggle label="Hide in fullscreen" detail="Hide the dock while an app fills the dock’s display"
+                checked={settings.hideInFullscreen} onChange={(value) => update('hideInFullscreen', value)} />
             </div></section>
+            {desktop && <DockExclusions />}
             <section className="setting-group" aria-labelledby="reveal"><h2 id="reveal">Auto-hide</h2><div className="settings-list">
               <Toggle label="Automatically hide dock" detail="Reveal it from the selected screen edge" checked={settings.autoHide} onChange={(value) => update('autoHide', value)} />
               <SegmentedSetting label="Reveal animation" value={settings.revealAnimation}
@@ -515,7 +566,8 @@ function SettingsApp() {
   </div>;
 }
 
-const surface = new URLSearchParams(location.search).get('surface');
+const params = new URLSearchParams(location.search);
+const surface = params.get('surface');
 document.documentElement.dataset.surface = surface ?? 'settings';
 
 createRoot(document.getElementById('root')!).render(surface === 'dock' && desktop ? <DesktopDock />
@@ -525,4 +577,5 @@ createRoot(document.getElementById('root')!).render(surface === 'dock' && deskto
   : surface === 'context' && desktop ? <DockContextMenu />
   : surface === 'system' && desktop ? <SystemPanel />
   : surface === 'widget-popup' && desktop ? <WidgetPopup />
+  : surface === 'image-editor' ? <ImageEditorWindow widgetId={params.get('widget')} />
   : surface === 'drag' && desktop ? <DragPreview /> : <SettingsApp />);

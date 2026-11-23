@@ -1,4 +1,5 @@
 use crate::{
+    dock_visibility::same_executable,
     settings::{save_json, AppAppearance, DockEdge, Material, Settings},
     start_launcher::StartPreferences,
     start_menu, system_panel,
@@ -23,6 +24,7 @@ struct DockData {
     saved_docks: Vec<SavedDock>,
     active_dock: Option<String>,
     start_menu: StartPreferences,
+    dock_exclusions: Vec<PathBuf>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -224,6 +226,32 @@ impl DockStore {
 
     pub fn widgets(&self) -> Result<Layout, String> {
         Ok(self.lock()?.widgets.clone())
+    }
+
+    pub(crate) fn dock_exclusions(&self) -> Result<Vec<PathBuf>, String> {
+        Ok(self.lock()?.dock_exclusions.clone())
+    }
+
+    pub(crate) fn excludes_from_dock(&self, executable: &Path) -> bool {
+        self.data.lock().is_ok_and(|data| {
+            data.dock_exclusions.iter().any(|path| same_executable(path, executable))
+        })
+    }
+
+    pub(crate) fn edit_dock_exclusion(&self, executable: PathBuf, add: bool) -> Result<Vec<PathBuf>, String> {
+        let mut current = self.lock()?;
+        let found = current.dock_exclusions.iter().position(|path| same_executable(path, &executable));
+        if add == found.is_some() {
+            return Ok(current.dock_exclusions.clone());
+        }
+        let mut next = current.clone();
+        if let Some(index) = found {
+            next.dock_exclusions.remove(index);
+        } else {
+            next.dock_exclusions.push(executable);
+        }
+        self.commit(&mut current, next)?;
+        Ok(current.dock_exclusions.clone())
     }
 
     pub(crate) fn start_preferences(&self) -> Result<StartPreferences, String> {

@@ -9,6 +9,10 @@ mod desktop;
 #[cfg(windows)]
 mod dock_config;
 #[cfg(windows)]
+mod dock_visibility;
+#[cfg(windows)]
+mod image_editor_backdrop;
+#[cfg(windows)]
 mod media;
 #[cfg(windows)]
 mod notifications;
@@ -49,6 +53,8 @@ mod updates;
 mod usb_drives;
 #[cfg(windows)]
 mod widget_content;
+#[cfg(windows)]
+mod widget_image;
 #[cfg(windows)]
 mod widgets;
 

@@ -6,6 +6,7 @@ use crate::{
     },
     dock_config::DockStore,
     previews::{self, Previews},
+    widget_image::ImageWidget,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -41,6 +42,7 @@ pub(crate) enum Kind {
     DayProgress,
     QuickNote,
     DrawingPad,
+    Image,
     Agenda,
     QuickTasks,
     ColorPicker,
@@ -83,7 +85,7 @@ impl Kind {
     pub fn supports_surface(self) -> bool {
         !matches!(
             self,
-            Self::Start | Self::SpacebarStart | Self::Spacer | Self::Divider
+            Self::Start | Self::SpacebarStart | Self::Spacer | Self::Divider | Self::Image
         )
     }
 
@@ -92,7 +94,7 @@ impl Kind {
     }
 
     pub fn supports_color(self) -> bool {
-        self.supports_size() && self != Self::Apps
+        self.supports_size() && !matches!(self, Self::Apps | Self::Image)
     }
 
     fn color_channels(self) -> &'static [ColorChannel] {
@@ -188,6 +190,8 @@ pub struct Item {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     audio_sensitivity: Option<AudioSensitivity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    image: Option<ImageWidget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     color: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     colors: BTreeMap<ColorChannel, String>,
@@ -219,12 +223,20 @@ impl Default for Layout {
                 audio_speed: None,
                 audio_alignment: None,
                 audio_sensitivity: None,
+                image: None,
                 color: None,
                 colors: BTreeMap::new(),
                 children: Vec::new(),
             }],
         }
     }
+}
+
+pub(crate) fn is_image_widget(items: &[Item], id: &str) -> bool {
+    items
+        .iter()
+        .flat_map(|item| std::iter::once(item).chain(&item.children))
+        .any(|item| item.kind == Kind::Image && item.id == id)
 }
 
 pub(crate) fn valid_color(color: &str) -> bool {
@@ -269,7 +281,8 @@ pub(crate) fn valid_layout(items: &[Item]) -> bool {
             if nested {
                 return false;
             }
-        } else if !matches!(item.kind, Kind::Folder | Kind::ClockPlain) && !kinds.insert(item.kind)
+        } else if !matches!(item.kind, Kind::Folder | Kind::ClockPlain | Kind::Image)
+            && !kinds.insert(item.kind)
         {
             return false;
         }
@@ -280,6 +293,13 @@ pub(crate) fn valid_layout(items: &[Item]) -> bool {
             return false;
         }
         if item.size.is_some() && !item.kind.supports_size() {
+            return false;
+        }
+        if item
+            .image
+            .as_ref()
+            .is_some_and(|image| item.kind != Kind::Image || !image.valid())
+        {
             return false;
         }
         if item.kind != Kind::AudioVisualizer
@@ -503,14 +523,14 @@ impl WidgetDrag {
         self.0.lock().is_ok_and(|drag| drag.is_some())
     }
 
-    pub fn track(&self, app: &AppHandle, cursor: POINT, x: f64, y: f64, inside: bool) {
+    pub fn track(&self, app: &AppHandle, cursor: POINT, x: f64, y: f64, inside: bool, cancel: bool) {
         let Ok(mut current) = self.0.lock() else {
             return;
         };
         let Some(drag) = current.as_mut() else {
             return;
         };
-        let cancelled = unsafe { GetAsyncKeyState(VK_ESCAPE as i32) < 0 };
+        let cancelled = cancel || unsafe { GetAsyncKeyState(VK_ESCAPE as i32) < 0 };
         let finished = cancelled || unsafe { GetAsyncKeyState(VK_LBUTTON as i32) >= 0 };
         let position = (cursor.x, cursor.y);
         if finished || drag.position != Some(position) {

@@ -31,6 +31,29 @@ jobs:
             throw 'The tag must match the stable version in package.json, tauri.conf.json, and Cargo.toml.'
           }
           "SPACEBAR_RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+      - name: Prepare release notes
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $releaseJson = gh release view $tag --json isDraft,body 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            $draftNotes = "release-notes/$tag.md"
+            if (Test-Path -LiteralPath $draftNotes) {
+              gh release create $tag --draft --verify-tag --notes-file $draftNotes
+            } else {
+              gh release create $tag --draft --verify-tag --generate-notes
+            }
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create a draft release.' }
+            $releaseJson = gh release view $tag --json isDraft,body
+            if ($LASTEXITCODE -ne 0) { throw 'Could not read the draft release.' }
+          }
+          $release = $releaseJson | ConvertFrom-Json
+          if (-not $release.isDraft) { throw 'This version is already published. Use a new version.' }
+          $notesPath = Join-Path $env:RUNNER_TEMP 'spacebar-release-notes.md'
+          [IO.File]::WriteAllText($notesPath, [string]$release.body, [Text.UTF8Encoding]::new($false))
+          "SPACEBAR_RELEASE_NOTES_FILE=$notesPath" >> $env:GITHUB_ENV
       - run: npm ci
       - name: Build signed installer
         run: npm run release:build
@@ -48,13 +71,8 @@ jobs:
           $installer = Join-Path 'src-tauri/target/release/bundle/nsis' $installerName
           $signature = (Get-Content "$installer.sig" -Raw).Trim()
 
-          $releaseJson = gh release view $tag --json isDraft,databaseId 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --draft --verify-tag --generate-notes
-            if ($LASTEXITCODE -ne 0) { throw 'Could not create a draft release.' }
-            $releaseJson = gh release view $tag --json isDraft,databaseId
-            if ($LASTEXITCODE -ne 0) { throw 'Could not find the draft release.' }
-          }
+          $releaseJson = gh release view $tag --json isDraft,databaseId
+          if ($LASTEXITCODE -ne 0) { throw 'Could not find the draft release.' }
           $release = $releaseJson | ConvertFrom-Json
           if (-not $release.isDraft) { throw 'This version is already published. Use a new version.' }
 

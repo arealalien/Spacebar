@@ -1,6 +1,7 @@
-use super::{enumerator, Com};
+use super::{enumerator, AudioLevel, Com};
 use crate::apps::process_path;
 use std::{
+    ptr::null,
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -10,9 +11,9 @@ use windows::{
     core::{Interface, Result as WindowsResult},
     Win32::{
         Media::Audio::{
-            eRender, AudioSessionStateActive, Endpoints::IAudioMeterInformation,
-            IAudioSessionControl, IAudioSessionControl2, IAudioSessionManager2,
-            IMMDeviceEnumerator, ISimpleAudioVolume, DEVICE_STATE_ACTIVE,
+            eRender, AudioSessionStateActive, AudioSessionStateExpired,
+            Endpoints::IAudioMeterInformation, IAudioSessionControl, IAudioSessionControl2,
+            IAudioSessionManager2, IMMDeviceEnumerator, ISimpleAudioVolume, DEVICE_STATE_ACTIVE,
         },
         System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED},
     },
@@ -78,7 +79,13 @@ fn sample(shared: Arc<Mutex<MeterState>>) {
             }
             meters = devices
                 .as_ref()
-                .and_then(|devices| spotify_meters(devices).ok())
+                .and_then(|devices| spotify_sessions(devices).ok())
+                .map(|sessions| {
+                    sessions
+                        .into_iter()
+                        .filter_map(SessionMeter::active)
+                        .collect()
+                })
                 .unwrap_or_default();
         }
         let peak = meters
@@ -92,8 +99,8 @@ fn sample(shared: Arc<Mutex<MeterState>>) {
     }
 }
 
-fn spotify_meters(devices: &IMMDeviceEnumerator) -> WindowsResult<Vec<SessionMeter>> {
-    let mut meters = Vec::new();
+fn spotify_sessions(devices: &IMMDeviceEnumerator) -> WindowsResult<Vec<IAudioSessionControl>> {
+    let mut matches = Vec::new();
     unsafe {
         // Check every playback device, including an app-specific output selected in Windows.
         let outputs = devices.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)?;
@@ -106,17 +113,86 @@ fn spotify_meters(devices: &IMMDeviceEnumerator) -> WindowsResult<Vec<SessionMet
                 continue;
             };
             for index in 0..sessions.GetCount().unwrap_or(0) {
-                if let Some(meter) = sessions
-                    .GetSession(index)
-                    .ok()
-                    .and_then(SessionMeter::spotify)
-                {
-                    meters.push(meter);
+                if let Ok(session) = sessions.GetSession(index) {
+                    if is_spotify_session(&session) {
+                        matches.push(session);
+                    }
                 }
             }
         }
     }
-    Ok(meters)
+    Ok(matches)
+}
+
+fn is_spotify_session(session: &IAudioSessionControl) -> bool {
+    let pid = session
+        .cast::<IAudioSessionControl2>()
+        .and_then(|control| unsafe { control.GetProcessId() });
+    pid.ok().and_then(process_path).is_some_and(|path| {
+        path.file_name()
+            .is_some_and(|name| name.eq_ignore_ascii_case("Spotify.exe"))
+    })
+}
+
+#[tauri::command]
+pub async fn spotify_volume(
+    webview: WebviewWindow,
+    level: Option<f32>,
+) -> Result<Option<AudioLevel>, String> {
+    if webview.label() != "widget-popup" {
+        return Err("Spotify volume is unavailable here.".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let _com = Com::enter(COINIT_MULTITHREADED)?;
+        let sessions = spotify_sessions(&enumerator()?)?;
+        let mut current = None;
+        let mut active = false;
+        let mut write_error = None;
+        for session in sessions {
+            let state = unsafe { session.GetState() };
+            if state
+                .as_ref()
+                .is_ok_and(|state| *state == AudioSessionStateExpired)
+            {
+                continue;
+            }
+            let Ok(volume) = session.cast::<ISimpleAudioVolume>() else {
+                continue;
+            };
+            let result: WindowsResult<AudioLevel> = (|| unsafe {
+                if let Some(level) = level {
+                    volume.SetMasterVolume(level.clamp(0.0, 1.0), null())?;
+                    if level > 0.0 && volume.GetMute()?.as_bool() {
+                        volume.SetMute(false, null())?;
+                    }
+                }
+                Ok(AudioLevel {
+                    level: volume.GetMasterVolume()?,
+                    muted: volume.GetMute()?.as_bool(),
+                })
+            })();
+            match result {
+                Ok(value) => {
+                    let playing = state.is_ok_and(|state| state == AudioSessionStateActive);
+                    if current.is_none() || (playing && !active) {
+                        current = Some(value);
+                        active = playing;
+                    }
+                }
+                Err(error) if level.is_some() => {
+                    write_error = Some(error);
+                }
+                Err(_) => {}
+            }
+        }
+        match (current, write_error) {
+            (None, Some(error)) => Err(error),
+            (current, _) => Ok(current),
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())
 }
 
 struct SessionMeter {
@@ -125,18 +201,9 @@ struct SessionMeter {
 }
 
 impl SessionMeter {
-    fn spotify(session: IAudioSessionControl) -> Option<Self> {
+    fn active(session: IAudioSessionControl) -> Option<Self> {
         unsafe {
             if session.GetState().ok()? != AudioSessionStateActive {
-                return None;
-            }
-            let pid = session
-                .cast::<IAudioSessionControl2>()
-                .ok()?
-                .GetProcessId()
-                .ok()?;
-            let path = process_path(pid)?;
-            if !path.file_name()?.eq_ignore_ascii_case("Spotify.exe") {
                 return None;
             }
             Some(Self {

@@ -2,6 +2,8 @@ use crate::{
     apps::{self, AppCatalog},
     connectivity,
     dock_config::{self, DockStore},
+    dock_visibility::{self, ForegroundVisibility},
+    image_editor_backdrop,
     media::{self, MediaState},
     popups::{self, PopupState},
     previews::{self, Previews},
@@ -17,10 +19,12 @@ use crate::{
     taskbar::{self, TaskbarOrder},
     telemetry::{self, Telemetry},
     widget_content::{self, WidgetContentStore},
+    widget_image,
     widgets::{self, OpenFolder, WidgetDrag},
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    cell::Cell,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
@@ -31,7 +35,8 @@ use std::{
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, RunEvent, State, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, State, Url, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder, WindowEvent,
 };
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
@@ -43,6 +48,10 @@ use windows_sys::Win32::{
         },
     },
     UI::{
+        HiDpi::GetDpiForWindow,
+        Input::KeyboardAndMouse::{
+            GetAsyncKeyState, GetCapture, ReleaseCapture, SetCapture, VK_LBUTTON, VK_RBUTTON,
+        },
         Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
         WindowsAndMessaging::*,
     },
@@ -77,6 +86,7 @@ struct DockPlacement {
     start_revealed: bool,
     expanded: bool,
     revealed: bool,
+    suppressed: bool,
     idle_since: Option<Instant>,
     hide_at: Option<Instant>,
     effects: Option<DockEffectScene>,
@@ -462,9 +472,23 @@ mod placement_tests {
     }
 }
 
-const FRAME_STYLE: u32 = WS_CAPTION | WS_THICKFRAME;
+#[repr(usize)]
+enum FramelessWindow {
+    Interactive,
+    NoActivate,
+    ImageEditor,
+}
 
-fn suppress_frame(hwnd: HWND, no_mouse_activate: bool) {
+fn native_frame_styles(mode: usize) -> u32 {
+    if mode == FramelessWindow::ImageEditor as usize {
+        WS_CAPTION
+    } else {
+        WS_CAPTION | WS_THICKFRAME
+    }
+}
+
+fn suppress_frame(hwnd: HWND, mode: FramelessWindow) {
+    let mode = mode as usize;
     let policy = DWMNCRP_DISABLED;
     let border = 0xffff_fffe_u32; // DWMWA_COLOR_NONE
     let flags = 1_i32;
@@ -473,10 +497,10 @@ fn suppress_frame(hwnd: HWND, no_mouse_activate: bool) {
             hwnd,
             Some(frameless_surface_proc),
             1,
-            no_mouse_activate as usize,
+            mode,
         );
         let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
-        let frameless = style & !(FRAME_STYLE as isize);
+        let frameless = style & !(native_frame_styles(mode) as isize);
         if frameless != style {
             SetWindowLongPtrW(hwnd, GWL_STYLE, frameless);
             SetWindowPos(
@@ -516,19 +540,36 @@ unsafe extern "system" fn frameless_surface_proc(
     wparam: WPARAM,
     lparam: LPARAM,
     subclass: usize,
-    no_mouse_activate: usize,
+    mode: usize,
 ) -> LRESULT {
     match message {
         // Deliver clicks to the WebView without activating its top-level tool window.
-        WM_MOUSEACTIVATE if no_mouse_activate != 0 => return MA_NOACTIVATE as LRESULT,
+        WM_MOUSEACTIVATE if mode == FramelessWindow::NoActivate as usize => {
+            return MA_NOACTIVATE as LRESULT
+        }
         WM_STYLECHANGING if wparam as i32 == GWL_STYLE && lparam != 0 => {
             // The runtime can restore its window styles when showing a hidden surface.
-            (*(lparam as *mut STYLESTRUCT)).styleNew &= !FRAME_STYLE;
+            (*(lparam as *mut STYLESTRUCT)).styleNew &= !native_frame_styles(mode);
             return 0;
         }
         WM_NCCALCSIZE | WM_NCPAINT => return 0,
         WM_NCACTIVATE => return 1,
+        WM_MOUSEMOVE if mode == FramelessWindow::ImageEditor as usize && move_image_editor(hwnd) => {
+            return 0
+        }
+        WM_LBUTTONUP if mode == FramelessWindow::ImageEditor as usize => {
+            if end_image_editor_move(hwnd) {
+                return 0;
+            }
+        }
+        WM_CANCELMODE | WM_CAPTURECHANGED if mode == FramelessWindow::ImageEditor as usize => {
+            end_image_editor_move(hwnd);
+        }
         WM_NCDESTROY => {
+            if mode == FramelessWindow::ImageEditor as usize {
+                end_image_editor_move(hwnd);
+                image_editor_backdrop::detach(hwnd);
+            }
             RemoveWindowSubclass(hwnd, Some(frameless_surface_proc), subclass);
         }
         _ => {}
@@ -555,9 +596,207 @@ struct SettingsWindow {
     opening: AtomicBool,
 }
 
+#[derive(Default)]
+struct ImageEditorWindow {
+    opening: Mutex<()>,
+    backdrop: AtomicBool,
+}
+
+#[derive(Clone, Copy)]
+struct ImageEditorMove {
+    window: HWND,
+    offset: POINT,
+    dpi: u32,
+}
+
+thread_local! {
+    static IMAGE_EDITOR_MOVE: Cell<Option<ImageEditorMove>> = const { Cell::new(None) };
+}
+
+#[tauri::command]
+fn start_image_editor_move(app: AppHandle, source: WebviewWindow) -> Result<(), String> {
+    if source.label() != "image-editor" {
+        return Err("Only the image editor can move this window.".into());
+    }
+    let hwnd = handle(&source)? as usize;
+    app.run_on_main_thread(move || unsafe {
+        let window = hwnd as HWND;
+        let primary = if GetSystemMetrics(SM_SWAPBUTTON) != 0 {
+            VK_RBUTTON
+        } else {
+            VK_LBUTTON
+        };
+        let mut cursor = POINT::default();
+        let mut bounds = RECT::default();
+        if GetForegroundWindow() != window
+            || GetAsyncKeyState(i32::from(primary)) >= 0
+            || GetCursorPos(&mut cursor) == 0
+            || GetWindowRect(window, &mut bounds) == 0
+        {
+            return;
+        }
+        // Capture the pointer in the client window without starting a Windows caption drag.
+        SetCapture(window);
+        if GetCapture() == window {
+            IMAGE_EDITOR_MOVE.set(Some(ImageEditorMove {
+                window,
+                offset: POINT {
+                    x: cursor.x - bounds.left,
+                    y: cursor.y - bounds.top,
+                },
+                dpi: GetDpiForWindow(window).max(1),
+            }));
+        }
+    })
+    .map_err(|error| error.to_string())
+}
+
+fn move_image_editor(hwnd: HWND) -> bool {
+    let Some(drag) = IMAGE_EDITOR_MOVE.get().filter(|drag| drag.window == hwnd) else {
+        return false;
+    };
+    let mut cursor = POINT::default();
+    unsafe {
+        if GetCursorPos(&mut cursor) != 0 {
+            let dpi = GetDpiForWindow(hwnd).max(1);
+            let scale = f64::from(dpi) / f64::from(drag.dpi);
+            let left = cursor.x - (f64::from(drag.offset.x) * scale).round() as i32;
+            let mut top = cursor.y - (f64::from(drag.offset.y) * scale).round() as i32;
+            if let Ok(monitor) = monitor_info(cursor) {
+                let header = (64.0 * f64::from(dpi) / 96.0).round() as i32;
+                top = top.clamp(
+                    monitor.rcWork.top,
+                    (monitor.rcWork.bottom - header).max(monitor.rcWork.top),
+                );
+            }
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                left,
+                top,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+    }
+    true
+}
+
+fn end_image_editor_move(hwnd: HWND) -> bool {
+    if !IMAGE_EDITOR_MOVE.get().is_some_and(|drag| drag.window == hwnd) {
+        return false;
+    }
+    IMAGE_EDITOR_MOVE.set(None);
+    unsafe {
+        if GetCapture() == hwnd {
+            ReleaseCapture();
+        }
+    }
+    true
+}
+
+#[tauri::command]
+fn read_image_editor_backdrop(source: WebviewWindow, state: State<'_, ImageEditorWindow>) -> bool {
+    source.label() == "image-editor" && state.backdrop.load(Ordering::Relaxed)
+}
+
+fn set_image_editor_backdrop(app: &AppHandle, ready: bool) {
+    let state = app.state::<ImageEditorWindow>();
+    if state.backdrop.swap(ready, Ordering::Relaxed) != ready {
+        let _ = app.emit_to("image-editor", "image-editor-backdrop-changed", ready);
+    }
+}
+
 #[tauri::command]
 fn read_settings_page(settings: State<'_, SettingsWindow>) -> bool {
     settings.widgets.load(Ordering::Relaxed)
+}
+
+#[tauri::command]
+async fn open_image_editor(
+    app: AppHandle,
+    source: WebviewWindow,
+    id: Option<String>,
+) -> Result<(), String> {
+    if !matches!(source.label(), "settings" | "dock" | "folder" | "context")
+        || (id.is_none() && source.label() != "settings")
+    {
+        return Err("The image editor is unavailable here.".into());
+    }
+    if let Some(id) = id.as_deref() {
+        if !widgets::is_image_widget(&app.state::<DockStore>().widgets()?.items, id) {
+            return Err("This image widget is no longer available.".into());
+        }
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<ImageEditorWindow>();
+        let _opening = state.opening.lock().map_err(|error| error.to_string())?;
+        if let Some(editor) = app.get_webview_window("image-editor") {
+            return editor
+                .unminimize()
+                .and_then(|()| editor.show())
+                .and_then(|()| editor.set_focus())
+                .map_err(|error| error.to_string());
+        }
+        state.backdrop.store(false, Ordering::Relaxed);
+
+        let mut config = app
+            .config()
+            .app
+            .windows
+            .iter()
+            .find(|config| config.label == "image-editor")
+            .cloned()
+            .ok_or("The image editor is unavailable.")?;
+        if let Some(id) = id {
+            let url = Url::parse_with_params(
+                "http://localhost/index.html",
+                &[("surface", "image-editor"), ("widget", id.as_str())],
+            )
+            .map_err(|error| error.to_string())?;
+            config.url =
+                WebviewUrl::App(format!("index.html?{}", url.query().unwrap_or_default()).into());
+        }
+        let position = source.current_monitor().ok().flatten().map(|monitor| {
+            let area = monitor.work_area();
+            let scale = monitor.scale_factor();
+            config.width = config.width.min(f64::from(area.size.width) / scale);
+            config.height = config.height.min(f64::from(area.size.height) / scale);
+            config.min_width = config.min_width.map(|width| width.min(config.width));
+            config.min_height = config.min_height.map(|height| height.min(config.height));
+            config.center = false;
+            PhysicalPosition::new(
+                area.position.x
+                    + ((f64::from(area.size.width) - config.width * scale) / 2.0).round() as i32,
+                area.position.y
+                    + ((f64::from(area.size.height) - config.height * scale) / 2.0).round() as i32,
+            )
+        });
+        let editor = WebviewWindowBuilder::from_config(&app, &config)
+            .and_then(|builder| builder.visible(false).focused(false).build())
+            .map_err(|error| error.to_string())?;
+        if let Some(position) = position {
+            let _ = editor.set_position(position);
+        }
+        let hwnd = handle(&editor)? as usize;
+        let app_for_backdrop = app.clone();
+        app.run_on_main_thread(move || {
+            let hwnd = hwnd as HWND;
+            suppress_frame(hwnd, FramelessWindow::ImageEditor);
+            let ready = image_editor_backdrop::update_frame(hwnd).is_ok()
+                && image_editor_backdrop::attach(hwnd);
+            set_image_editor_backdrop(&app_for_backdrop, ready);
+        })
+        .map_err(|error| error.to_string())?;
+        editor
+            .show()
+            .and_then(|()| editor.set_focus())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn show_settings(app: &AppHandle, settings: &WebviewWindow) -> Result<(), String> {
@@ -805,14 +1044,8 @@ fn place_dock(
     dock_placement.layout = Some(new_layout);
     dock_placement.behind_start = behind_start;
     dock_placement.effects_position = None;
-    if !new_layout.has_content {
-        unsafe {
-            ShowWindow(hwnd, SW_HIDE);
-        }
-        hide_dock_effects(&app, &mut dock_placement);
-        dock_placement.hide_at = None;
-        dock_placement.revealed = false;
-        let _ = app.emit_to("dock", "dock-revealed", false);
+    if !new_layout.has_content || dock_placement.suppressed {
+        hide_dock_now(&app, hwnd, &mut dock_placement);
     } else if !settings.auto_hide {
         set_revealed(
             &app,
@@ -899,7 +1132,7 @@ async fn prepare_dock_effects(app: AppHandle, source: WebviewWindow) -> Result<(
             }
         };
         let hwnd = handle(&surface)? as usize;
-        app.run_on_main_thread(move || suppress_frame(hwnd as HWND, true))
+        app.run_on_main_thread(move || suppress_frame(hwnd as HWND, FramelessWindow::NoActivate))
             .map_err(|error| error.to_string())?;
         surface
             .set_ignore_cursor_events(true)
@@ -942,7 +1175,10 @@ fn update_dock_effects(
     let dock_hwnd = handle(&source)?;
     let mut state = placement.0.lock().map_err(|error| error.to_string())?;
     let Some((layout, opacity)) = state.layout.zip(opacity).filter(|(layout, _)| {
-        layout.has_content && settings.dock_snow && unsafe { IsWindowVisible(dock_hwnd) } != 0
+        layout.has_content
+            && !state.suppressed
+            && settings.dock_snow
+            && unsafe { IsWindowVisible(dock_hwnd) } != 0
     }) else {
         hide_dock_effects(&app, &mut state);
         return Ok(());
@@ -1008,7 +1244,7 @@ fn set_revealed(
     reveal: bool,
     duration: u32,
 ) {
-    if state.revealed == reveal {
+    if state.revealed == reveal || (reveal && state.suppressed) {
         return;
     }
     if reveal {
@@ -1028,6 +1264,69 @@ fn set_revealed(
     }
     state.revealed = reveal;
     let _ = app.emit_to("dock", "dock-revealed", reveal);
+}
+
+fn hide_dock_now(app: &AppHandle, hwnd: HWND, state: &mut DockPlacement) {
+    unsafe { ShowWindow(hwnd, SW_HIDE) };
+    state.start_revealed = false;
+    state.idle_since = None;
+    state.hide_at = None;
+    hide_dock_effects(app, state);
+    if std::mem::take(&mut state.revealed) {
+        let _ = app.emit_to("dock", "dock-revealed", false);
+    }
+}
+
+#[tauri::command]
+fn read_dock_revealed(placement: State<'_, Placement>) -> bool {
+    placement.0.lock().is_ok_and(|state| state.revealed)
+}
+
+pub(crate) fn dock_suppressed(app: &AppHandle) -> bool {
+    app.state::<Placement>()
+        .0
+        .lock()
+        .is_ok_and(|state| state.suppressed)
+}
+
+fn set_dock_suppression(app: &AppHandle, suppress: bool) -> bool {
+    let placement = app.state::<Placement>();
+    let Ok(mut state) = placement.0.lock() else {
+        return false;
+    };
+    let was_suppressed = std::mem::replace(&mut state.suppressed, suppress);
+    if !suppress || was_suppressed {
+        return false;
+    }
+    if let Ok(hwnd) = window(app, "dock").and_then(|dock| handle(&dock)) {
+        hide_dock_now(app, hwnd, &mut state);
+        if state.expanded
+            && state.layout.is_some_and(|layout| apply_dock_region(hwnd, layout, false).is_ok())
+        {
+            state.expanded = false;
+        }
+    }
+    true
+}
+
+fn dismiss_dock_surfaces(app: &AppHandle, entering: bool) {
+    if app.state::<Previews>().active() {
+        previews::close_all(app);
+    }
+    app.state::<WidgetPopup>().close_now(app);
+    if app.state::<PopupState>().menu_open() {
+        popups::close_context_menu(app.clone(), app.state());
+    }
+    let system = app.state::<SystemPanel>();
+    if entering || !system.start_active() {
+        system_panel::close_system_panel(app.clone(), system);
+    }
+    let folder = app.state::<OpenFolder>();
+    if folder.active() {
+        let _ = widgets::close_folder(app.clone(), folder);
+    }
+    app.state::<WidgetDrag>()
+        .track(app, POINT::default(), 0.0, 0.0, false, true);
 }
 
 fn track_dock(app: &AppHandle, cursor: POINT, popup_open: bool) {
@@ -1078,18 +1377,11 @@ fn track_dock(app: &AppHandle, cursor: POINT, popup_open: bool) {
             (cursor.x - layout.window.left) as f64 / layout.scale,
             (cursor.y - layout.window.top) as f64 / layout.scale,
             inside,
+            false,
         );
     }
     if !layout.has_content && !dragging {
-        if state.revealed {
-            unsafe {
-                ShowWindow(hwnd, SW_HIDE);
-            }
-            let _ = app.emit_to("dock", "dock-revealed", false);
-        }
-        state.revealed = false;
-        state.hide_at = None;
-        hide_dock_effects(app, &mut state);
+        hide_dock_now(app, hwnd, &mut state);
         return;
     }
     if !settings.auto_hide {
@@ -1211,6 +1503,9 @@ fn watch_pointer(app: AppHandle) {
         let previous = app.state::<PreviousForeground>();
         let queued = Arc::new(AtomicBool::new(false));
         let mut sampled_foreground = None;
+        let mut sampled_suppression = false;
+        let mut visibility = ForegroundVisibility::default();
+        let store = app.state::<DockStore>();
         loop {
             let foreground = unsafe { GetForegroundWindow() };
             if !foreground.is_null() && Some(foreground) != dock {
@@ -1223,27 +1518,36 @@ fn watch_pointer(app: AppHandle) {
                 || app.state::<PopupState>().menu_open();
             let dragging = app.state::<WidgetDrag>().active();
             let focus_changed = sampled_foreground != Some(foreground);
+            let settings = store.current();
+            let suppressed = visibility.sample(foreground, &store, settings.hide_in_fullscreen);
             let active = focus_changed
+                || sampled_suppression != suppressed
                 || popup_active
-                || app.state::<DockStore>().current().auto_hide
+                || (!suppressed && settings.auto_hide)
                 || app.state::<StartMenu>().tracking()
                 || preview_active
                 || widget_popup_active
                 || dragging
                 || app.state::<Placement>().0.lock().is_ok_and(|state| {
-                    state.behind_start
-                        || state.start_revealed
-                        || state.hide_at.is_some()
-                        || state
-                            .layout
-                            .is_some_and(|layout| layout.has_content != state.revealed)
+                    !state.suppressed
+                        && (state.behind_start
+                            || state.start_revealed
+                            || state.hide_at.is_some()
+                            || state.layout.is_some_and(|layout| layout.has_content != state.revealed))
                 });
             if active && !queued.swap(true, Ordering::AcqRel) {
                 sampled_foreground = Some(foreground);
+                sampled_suppression = suppressed;
                 let handle = app.clone();
                 let outstanding = queued.clone();
                 if app
                     .run_on_main_thread(move || {
+                        let entering = set_dock_suppression(&handle, suppressed);
+                        if suppressed
+                            && (entering || popup_active || preview_active || widget_popup_active || dragging)
+                        {
+                            dismiss_dock_surfaces(&handle, entering);
+                        }
                         if let Some(action) = handle.state::<StartMenu>().next_spacebar_action() {
                             let show = action == start_menu::ShortcutAction::Open;
                             if let Err(error) = system_panel::set_start_visible(&handle, show) {
@@ -1251,7 +1555,7 @@ fn watch_pointer(app: AppHandle) {
                             }
                         }
                         let mut cursor = POINT::default();
-                        if unsafe { GetCursorPos(&mut cursor) } != 0 {
+                        if !suppressed && unsafe { GetCursorPos(&mut cursor) } != 0 {
                             if focus_changed || popup_active {
                                 track_popup_focus(&handle, cursor);
                             }
@@ -1295,7 +1599,7 @@ fn set_dock_expanded(
     expanded: bool,
 ) -> Result<(), String> {
     let mut state = placement.0.lock().map_err(|error| error.to_string())?;
-    if state.expanded != expanded {
+    if !state.suppressed && state.expanded != expanded {
         if let Some(layout) = state.layout {
             apply_dock_region(handle(&window(&app, "dock")?)?, layout, expanded)?;
         }
@@ -1327,12 +1631,15 @@ pub fn run(dock_only: bool) {
         .manage(DockEffectsWindow::default())
         .manage(PreviousForeground::default())
         .manage(SettingsWindow::default())
+        .manage(ImageEditorWindow::default())
         .setup(move |app| {
             app.manage(DockStore::load(app.handle())?);
             app.manage(AppCatalog::load(app.handle())?);
             app.manage(WidgetContentStore::new(app.path().app_config_dir()?));
             for config in &app.config().app.windows {
-                if config.label == "dock-effects" || (dock_only && config.label == "settings") {
+                if matches!(config.label.as_str(), "dock-effects" | "image-editor")
+                    || (dock_only && config.label == "settings")
+                {
                     continue;
                 }
                 let surface = WebviewWindowBuilder::from_config(app, config)?.build()?;
@@ -1341,7 +1648,12 @@ pub fn run(dock_only: bool) {
                     "dock" | "preview" | "peek" | "drag" | "widget-popup" | "system"
                 ) {
                     if let Ok(hwnd) = surface.hwnd() {
-                        suppress_frame(hwnd.0 as HWND, surface.label() != "system");
+                        let mode = if surface.label() == "system" {
+                            FramelessWindow::Interactive
+                        } else {
+                            FramelessWindow::NoActivate
+                        };
+                        suppress_frame(hwnd.0 as HWND, mode);
                     }
                 }
             }
@@ -1387,6 +1699,17 @@ pub fn run(dock_only: bool) {
             Ok(())
         })
         .on_window_event(|window, event| {
+            if window.label() == "image-editor"
+                && matches!(event, WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. })
+            {
+                if let Ok(hwnd) = window.hwnd() {
+                    let hwnd = hwnd.0 as HWND;
+                    if image_editor_backdrop::update_frame(hwnd).is_err() {
+                        image_editor_backdrop::detach(hwnd);
+                        set_image_editor_backdrop(window.app_handle(), false);
+                    }
+                }
+            }
             if window.label() == "context" && matches!(event, WindowEvent::Focused(true)) {
                 let state = window.app_handle().state::<PopupState>();
                 if state.menu_open() {
@@ -1407,8 +1730,14 @@ pub fn run(dock_only: bool) {
             crate::updates::read_update,
             crate::updates::download_update,
             crate::updates::install_update,
+            crate::updates::read_whats_new,
+            crate::updates::dismiss_whats_new,
+            crate::updates::open_release_notes_link,
             dock_config::read_settings,
             dock_config::write_settings,
+            dock_visibility::read_dock_exclusions,
+            dock_visibility::add_dock_exclusion,
+            dock_visibility::remove_dock_exclusion,
             dock_config::read_app_appearance,
             dock_config::write_app_appearance,
             dock_config::read_saved_docks,
@@ -1424,6 +1753,7 @@ pub fn run(dock_only: bool) {
             startup::set_startup,
             quit_spacebar,
             place_dock,
+            read_dock_revealed,
             set_dock_expanded,
             prepare_dock_effects,
             read_dock_effects,
@@ -1437,6 +1767,11 @@ pub fn run(dock_only: bool) {
             previews::activate_preview_window,
             previews::close_preview_window,
             dock_config::read_widgets,
+            open_image_editor,
+            read_image_editor_backdrop,
+            start_image_editor_move,
+            widget_image::read_widget_image,
+            widget_image::save_widget_image,
             dock_config::save_widgets,
             widget_content::read_widget_content,
             widget_content::write_widget_content,
@@ -1472,6 +1807,7 @@ pub fn run(dock_only: bool) {
             system_widgets::audio_snapshot,
             system_widgets::audio_spectrum::audio_output_spectrum,
             system_widgets::spotify_meter::spotify_output_peak,
+            system_widgets::spotify_meter::spotify_volume,
             system_widgets::audio_devices,
             system_widgets::select_audio_device,
             connectivity::wifi_networks,

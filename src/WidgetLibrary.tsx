@@ -1,6 +1,7 @@
 import { ArrowLeft, Check, Clock3, Columns2, Cpu, FolderOpen, Grid2X2, Headphones, LayoutGrid, NotebookPen, Search } from 'lucide-react';
 import { useState, type CSSProperties } from 'react';
 import { WidgetSpecimen } from './WidgetFaces';
+import { openImageEditor } from './ImageWidget';
 import { demoApps, desktop, type DockApp } from './model';
 import { useDockApps } from './useDockApps';
 import { allWidgets, editWidgets, placeWidget, rowApps, useWidgetDrag, widgetAppearance, widgetColorStyle, widgetNames, type WidgetItem, type WidgetKind } from './widgets';
@@ -9,7 +10,7 @@ import { clockKinds, repeatableWidget, spotifyKinds, weatherKinds, widgetCatalog
 const widgetSections = [
   { id: 'clocks', name: 'Clocks', icon: Clock3, kinds: clockKinds },
   { id: 'personal', name: 'Personal', icon: NotebookPen, kinds: ['quick-note', 'drawing-pad', 'agenda', 'quick-tasks', 'color-picker', ...weatherKinds] as const },
-  { id: 'media', name: 'Media & audio', icon: Headphones, kinds: [...spotifyKinds, 'volume', 'microphone', 'mixer', 'audio-visualizer'] as const },
+  { id: 'media', name: 'Media & audio', icon: Headphones, kinds: ['image', ...spotifyKinds, 'volume', 'microphone', 'mixer', 'audio-visualizer'] as const },
   { id: 'performance', name: 'Performance', icon: Cpu, kinds: ['system-rings', 'cpu', 'ram', 'gpu', 'performance', 'network', 'network-usage', 'storage'] as const },
   { id: 'system', name: 'System', icon: Grid2X2, kinds: ['start', 'spacebar-start', 'tray', 'show-desktop', 'notifications', 'quick-settings', 'keyboard', 'display', 'notification-settings', 'capture'] as const },
   { id: 'apps', name: 'Apps & folders', icon: FolderOpen, kinds: ['folder', 'apps'] as const },
@@ -31,7 +32,10 @@ export function WidgetsSidebar({ onBack, section, onSection, query, onQuery }: {
   </div>;
 }
 
-function WidgetCard({ kind, items, ready, apps, onError }: { kind: WidgetKind; items: WidgetItem[]; ready: boolean; apps: DockApp[]; onError: (error: unknown) => void }) {
+function WidgetCard({ kind, items, ready, apps, onError }: {
+  kind: WidgetKind; items: WidgetItem[]; ready: boolean; apps: DockApp[];
+  onError: (error: unknown) => void;
+}) {
   const installed = allWidgets(items).find((item) => item.kind === kind);
   const unique = !repeatableWidget(kind);
   const specimen = unique ? installed : undefined;
@@ -41,6 +45,7 @@ function WidgetCard({ kind, items, ready, apps, onError }: { kind: WidgetKind; i
   return <button type="button" className={`widget-card gallery-${kind}`} aria-label={`${label}${unique && installed ? ', on dock' : ', add to dock'}`}
     title={detail} style={{ '--gallery-width': (width ? width + 12 : 86) + 'px' } as CSSProperties}
     disabled={!ready} {...drag} onClick={(event) => {
+      if (kind === 'image') { void openImageEditor().catch(onError); return; }
       if ((event.detail === 0 || !desktop) && !(unique && installed)) {
         void editWidgets((layout) => placeWidget(layout, { type: 'new', kind })).catch(onError);
       }
@@ -52,7 +57,9 @@ function WidgetCard({ kind, items, ready, apps, onError }: { kind: WidgetKind; i
   </button>;
 }
 
-export function WidgetLibrary({ items, ready, query, selected }: { items: WidgetItem[]; ready: boolean; query: string; selected: WidgetSection }) {
+export function WidgetLibrary({ items, ready, query, selected }: {
+  items: WidgetItem[]; ready: boolean; query: string; selected: WidgetSection;
+}) {
   const [error, setError] = useState('');
   const { apps } = useDockApps();
   const visibleApps = desktop && apps.length ? rowApps(apps, items) : demoApps;

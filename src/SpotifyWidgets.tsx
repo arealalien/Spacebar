@@ -1,9 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
-import { ArrowUpRight, AudioLines, Music2 } from 'lucide-react';
+import { ArrowUpRight, AudioLines, Music2, Volume2, VolumeX } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { useHoverPopup, type HoverPopupKind } from './HoverPopup';
 import { defaults, desktop, type Settings } from './model';
 import { PlaybackControls, type MediaAction, type PlaybackState } from './PlaybackControls';
+import { sampleSpotifyArtwork, type SpotifyArtworkColors } from './spotifyArtworkColors';
 import { SurfaceSnow } from './SurfaceSnow';
 import { useSurfacePayload } from './useSurfacePayload';
 import { isWeatherKind, type SpotifyKind } from './widgetCatalog';
@@ -37,10 +38,13 @@ function trackTitle(track: SpotifyTrack | undefined, specimen?: boolean) {
   return track?.title || (specimen ? 'Spotify' : track?.available ? 'No track playing' : 'Open Spotify to play');
 }
 
-function Artwork({ track, className }: { track?: SpotifyTrack; className?: string }) {
+function Artwork({ track, className, onImageLoad }: {
+  track?: SpotifyTrack; className?: string; onImageLoad?: (image: HTMLImageElement) => void;
+}) {
   return <span className={`spotify-artwork${className ? ` ${className}` : ''}`} data-loaded={!!track?.artwork} aria-hidden="true">
     <Music2 />
-    {track?.artwork && <img src={track.artwork} alt="" draggable={false} />}
+    {track?.artwork && <img src={track.artwork} alt="" draggable={false}
+      onLoad={onImageLoad && ((event) => onImageLoad(event.currentTarget))} />}
   </span>;
 }
 
@@ -313,18 +317,101 @@ export function SpotifyFace({ kind, widget, specimen, live, onError }: {
 
 type WidgetPopupDetails = { id: number; kind: HoverPopupKind; keyboard: boolean; edge: Settings['edge']; animated: boolean; closing: boolean };
 
+type SpotifyVolume = { level: number; muted: boolean };
+
+function SpotifyVolumeControl({ colors, onError }: { colors?: SpotifyArtworkColors; onError: (error: unknown) => void }) {
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [volume, setVolume] = useState<SpotifyVolume | null>();
+  const [draft, setDraft] = useState<number>();
+  const pending = useRef<number | undefined>(undefined);
+  const writing = useRef(false);
+  const revision = useRef(0);
+  const expanded = hovered || focused;
+  const value = draft ?? Math.round((volume?.level ?? 0) * 100);
+  const Icon = volume && (volume.muted || value === 0) ? VolumeX : Volume2;
+
+  useEffect(() => {
+    if (!expanded) return;
+    let active = true;
+    let reading = false;
+    async function read() {
+      if (writing.current || reading) return;
+      const version = revision.current;
+      reading = true;
+      try {
+        const next = await invoke<SpotifyVolume | null>('spotify_volume');
+        if (active && version === revision.current) setVolume(next);
+      } catch {
+        if (active && version === revision.current) setVolume(null);
+      } finally {
+        reading = false;
+      }
+    }
+    void read();
+    const timer = window.setInterval(() => void read(), 1000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [expanded]);
+
+  async function change(nextValue: number) {
+    pending.current = nextValue;
+    setDraft(nextValue);
+    revision.current++;
+    if (writing.current) return;
+    writing.current = true;
+    try {
+      while (pending.current !== undefined) {
+        const next = pending.current;
+        pending.current = undefined;
+        setVolume(await invoke<SpotifyVolume | null>('spotify_volume', { level: next / 100 }));
+      }
+    } catch (error) {
+      pending.current = undefined;
+      onError(error);
+    } finally {
+      writing.current = false;
+      setDraft(undefined);
+    }
+  }
+
+  return <div className="spotify-volume" data-expanded={expanded}
+    style={colors && { '--volume-dark-swatch': colors.dark, '--volume-bright-swatch': colors.bright } as CSSProperties}
+    onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)}
+    onFocus={() => setFocused(true)} onBlur={(event) => {
+      if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false);
+    }}>
+    <button className="spotify-volume-trigger" type="button" aria-label="Spotify volume"
+      aria-expanded={expanded} aria-controls="spotify-volume-slider" onClick={(event) => event.currentTarget.focus()}>
+      <Icon aria-hidden="true" />
+    </button>
+    <div className="spotify-volume-panel" id="spotify-volume-slider" inert={!expanded}>
+      {volume ? <div className="slider-field" style={{ '--progress': `${value}%` } as CSSProperties}>
+        <input type="range" min="0" max="100" value={value} aria-label="Spotify playback volume"
+          aria-valuetext={`${value}%${volume.muted ? ', muted' : ''}`} onChange={(event) => void change(event.currentTarget.valueAsNumber)} />
+      </div> : <span>{volume === undefined ? 'Checking Spotify…' : 'Play Spotify to adjust volume'}</span>}
+    </div>
+  </div>;
+}
+
 function SpotifyPlayerContent({ onOpened, onError }: {
-  onOpened: () => Promise<void>;
+  onOpened?: () => Promise<void>;
   onError: (error: unknown) => void;
 }) {
   const track = spotify.useValue(true);
   const [opening, setOpening] = useState(false);
+  const [artworkColors, setArtworkColors] = useState<{ src: string; colors: SpotifyArtworkColors }>();
+  const colors = artworkColors && artworkColors.src === track?.artwork ? artworkColors.colors : undefined;
+
+  function readArtworkColors(image: HTMLImageElement) {
+    const colors = sampleSpotifyArtwork(image);
+    setArtworkColors(colors ? { src: image.currentSrc, colors } : undefined);
+  }
 
   async function openSpotify() {
     setOpening(true);
     try {
       await invoke('open_spotify');
-      await onOpened();
+      await onOpened?.();
     } catch (error) {
       onError(error);
     } finally {
@@ -333,9 +420,10 @@ function SpotifyPlayerContent({ onOpened, onError }: {
   }
 
   return <>
-    <Artwork track={track} className="spotify-player-cover" />
-    <button className="spotify-player-app" type="button" aria-label="Open Spotify" title="Open Spotify"
+    <Artwork track={track} className="spotify-player-cover" onImageLoad={onOpened ? undefined : readArtworkColors} />
+    {onOpened ? <button className="spotify-player-app" type="button" aria-label="Open Spotify" title="Open Spotify"
       disabled={opening} onClick={() => void openSpotify()}><ArrowUpRight aria-hidden="true" /></button>
+      : <SpotifyVolumeControl colors={colors} onError={onError} />}
     <div className="spotify-player-info">
       <TrackInfo track={track} tooltip />
       {track?.timeline && <TrackProgress key={`${track.title}\0${track.artist}`} timeline={track.timeline}
@@ -425,7 +513,7 @@ export function WidgetPopup() {
   }
   return <main {...frame} className="spotify-player spotify-popup widget-popup-motion" role="dialog" aria-label="Spotify playback">
     {showSnow && <SurfaceSnow />}
-    <SpotifyPlayerContent onError={onError} onOpened={close} />
+    <SpotifyPlayerContent key={popup.id} onError={onError} />
     {error && <p className="spotify-popup-error" role="alert" title={error}>{error}</p>}
   </main>;
 }

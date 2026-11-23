@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { AudioLines, Clock3, CloudSun, Folder, Music2 } from 'lucide-react';
+import { AudioLines, Clock3, CloudSun, Folder, Image as ImageIcon, Music2 } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { DockAppIcon } from './AppIcon';
 import { demoApps, type DockApp } from './model';
@@ -10,6 +10,7 @@ import { SpotifyFace } from './SpotifyWidgets';
 import { isPersonalWidget, PersonalGlyph, PersonalWidget } from './PersonalWidgets';
 import { AudioVisualizer } from './AudioVisualizer';
 import { WeatherWidget } from './WeatherWidgets';
+import { ImageWidgetFace } from './ImageWidget';
 
 const timeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
 const dateFormat = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
@@ -120,6 +121,7 @@ export function WidgetSpecimen({ kind, apps = demoApps, item, live = false }: { 
   if (isWeatherKind(kind)) return <WeatherWidget kind={kind} specimen />;
   if (isPersonalWidget(kind)) return <PersonalWidget kind={kind} specimen />;
   switch (kind) {
+    case 'image': return <ImageWidgetFace item={item} specimen />;
     case 'audio-visualizer': return <AudioVisualizer specimen options={item} />;
     case 'start': case 'spacebar-start': return <span className="widget-face start-face"><WindowsMark /></span>;
     case 'spacer': return <span className="layout-face spacer-face" aria-hidden="true" />;
@@ -137,6 +139,7 @@ function FolderContents({ item, apps }: { item?: WidgetItem; apps: DockApp[] }) 
     {child.kind === 'app' ? <DockAppIcon app={apps.find((app) => app.id === child.appId) ?? { id: child.appId ?? '', icon: child.icon }} />
       : isStartWidget(child.kind) ? <WindowsMark /> : isClockKind(child.kind) ? <Clock3 size="75%" /> : isSpotifyKind(child.kind) ? <Music2 size="75%" />
       : isPersonalWidget(child.kind) ? <PersonalGlyph kind={child.kind} />
+      : child.kind === 'image' ? <ImageIcon size="75%" />
       : child.kind === 'audio-visualizer' ? <AudioLines size="75%" /> : isWeatherKind(child.kind) ? <CloudSun size="75%" /> : <SystemWidgetGlyph kind={child.kind} />}
   </span>)}</span>;
 }
@@ -154,6 +157,7 @@ export function WidgetFace({ item, apps, specimen = false, active = true, onFold
   if (isWeatherKind(item.kind)) return <WeatherWidget kind={item.kind} widget={item.id} specimen={specimen} onError={onError} />;
   if (isPersonalWidget(item.kind)) return <PersonalWidget kind={item.kind} specimen={specimen} onError={onError} />;
   switch (item.kind) {
+    case 'image': return <ImageWidgetFace item={item} specimen={specimen} onError={onError} />;
     case 'audio-visualizer': return <AudioVisualizer specimen={specimen} active={active} options={item} />;
     case 'start': return <button type="button" className="widget-face start-face" aria-label="Open Windows Start menu" title="Start menu"
       onClick={(event) => { if (!specimen) void invoke('toggle_start_menu', { anchor: dockPopupAnchor(event.currentTarget) }).catch(onError); }}><WindowsMark /></button>;

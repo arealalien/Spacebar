@@ -47,6 +47,7 @@ export interface Settings {
   indicators: boolean;
   notificationBadges: 'dot' | 'none' | 'count';
   hideSettingsIcon: boolean;
+  hideInFullscreen: boolean;
   autoHide: boolean;
   replaceTaskbar: boolean;
   replaceWindowsStart: boolean;
@@ -80,7 +81,7 @@ export const defaults: Settings = {
   edge: 'bottom', alignment: 'center', fullSpan: false,
   iconSize: 46, spacing: 10, padding: 8, offset: 12, zoom: 1.55, falloff: 2.1, duration: 420,
   magnify: true, names: true, previews: true, previewDisplay: 'window', indicators: true, notificationBadges: 'dot',
-  hideSettingsIcon: false, autoHide: false, replaceTaskbar: true, replaceWindowsStart: false,
+  hideSettingsIcon: false, hideInFullscreen: true, autoHide: false, replaceTaskbar: true, replaceWindowsStart: false,
   revealDuration: 260, revealAnimation: 'easing', bounceAmount: 35,
   material: 'tinted', tintColor: '#c8b6ff', dockSnow: false,
   accent: 'purple',
@@ -157,6 +158,7 @@ export function normalizeSettings(value: unknown): Settings {
   return {
     ...defaults, ...preferences, material,
     dockSnow: stored.dockSnow === true,
+    hideInFullscreen: stored.hideInFullscreen !== false,
     padding: typeof padding === 'number' && Number.isFinite(padding)
       ? Math.min(dockPaddingRange.max, Math.max(dockPaddingRange.min, Math.round(padding)))
       : defaults.padding,

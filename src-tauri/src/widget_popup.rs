@@ -123,11 +123,19 @@ impl WidgetPopup {
     }
 
     pub fn close(&self, app: &AppHandle) {
+        self.close_with_animation(app, true);
+    }
+
+    pub(crate) fn close_now(&self, app: &AppHandle) {
+        self.close_with_animation(app, false);
+    }
+
+    fn close_with_animation(&self, app: &AppHandle, animate: bool) {
         let (popup, origin) = {
             let Ok(mut current) = self.current.lock() else {
                 return;
             };
-            let Some(open) = current.as_mut().filter(|open| open.exit_deadline.is_none()) else {
+            let Some(open) = current.as_mut().filter(|open| !animate || open.exit_deadline.is_none()) else {
                 return;
             };
             open.exit_deadline = Some(Instant::now() + EXIT_TIMEOUT);
@@ -139,7 +147,7 @@ impl WidgetPopup {
             "widget-popup-anchor-changed",
             Option::<WidgetPopupAnchor>::None,
         );
-        if !popup.animated || !animations_enabled() {
+        if !animate || !popup.animated || !animations_enabled() {
             self.finish_exit(app, popup.id);
             return;
         }
@@ -296,6 +304,9 @@ pub fn show_widget_popup(
     toggle: bool,
     keyboard: bool,
 ) -> Result<(), String> {
+    if crate::desktop::dock_suppressed(&app) {
+        return Ok(());
+    }
     let folder = match webview.label() {
         "dock" => false,
         "folder" if app.state::<OpenFolder>().active() => true,
