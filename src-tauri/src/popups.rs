@@ -169,17 +169,19 @@ pub fn open_context_menu(
     let (logical_width, logical_height) = match &target {
         MenuTarget::Dock => (218.0, 110.0),
         MenuTarget::Widget { kind, .. } => match kind {
-            Some(crate::widgets::Kind::Spacer) => (246.0, 238.0),
+            Some(crate::widgets::Kind::Spacer) => (246.0, 270.0),
             Some(kind) => (
                 246.0,
-                179.0
+                211.0
                     + if kind.supports_size() { 59.0 } else { 0.0 }
                     + 72.0 * kind.color_picker_count() as f64
                     + if *kind == crate::widgets::Kind::AudioVisualizer { 192.0 } else { 0.0 }
                     + if *kind == crate::widgets::Kind::Image { 32.0 } else { 0.0 }
+                    + if kind.is_widget_container() { 153.0 } else { 32.0 }
+                    + if kind.is_clock() { 91.0 } else { 0.0 }
                     + if kind.supports_surface() { 64.0 } else { 0.0 },
             ),
-            None => (246.0, 384.0),
+            None => (246.0, 416.0),
         },
         MenuTarget::App {
             pinned,

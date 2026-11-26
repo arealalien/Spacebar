@@ -14,7 +14,7 @@ const widgetSections = [
   { id: 'performance', name: 'Performance', icon: Cpu, kinds: ['system-rings', 'cpu', 'ram', 'gpu', 'performance', 'network', 'network-usage', 'storage'] as const },
   { id: 'system', name: 'System', icon: Grid2X2, kinds: ['start', 'spacebar-start', 'tray', 'show-desktop', 'notifications', 'quick-settings', 'keyboard', 'display', 'notification-settings', 'capture'] as const },
   { id: 'apps', name: 'Apps & folders', icon: FolderOpen, kinds: ['folder', 'apps'] as const },
-  { id: 'layout', name: 'Layout', icon: Columns2, kinds: ['spacer', 'divider'] as const },
+  { id: 'layout', name: 'Layout', icon: Columns2, kinds: ['widget-group', 'widget-tray', 'spacer', 'divider'] as const },
 ] as const;
 export type WidgetSection = 'all' | typeof widgetSections[number]['id'];
 

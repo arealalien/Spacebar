@@ -13,6 +13,7 @@ import { ColorPicker } from './ColorPicker';
 import { appIconStyle } from './AppIcon';
 import { DemoDock, DesktopDock } from './Dock';
 import { DockExclusions } from './DockExclusions';
+import { useDockAppearance } from './dockAppearance';
 import { DesktopDockEffects } from './DockEffects';
 import { DockContextMenu, DragPreview } from './DockOverlays';
 import { WindowPreview } from './WindowPreview';
@@ -229,13 +230,15 @@ function StartupSetting() {
 
 function SettingsApp() {
   const [tab, setTab] = useState<Section | 'whats-new'>('dock');
-  const [release, setRelease] = useState<InstalledReleaseNotes>();
+  const [release, setRelease] = useState<InstalledReleaseNotes | null | undefined>(desktop ? undefined : null);
+  const selectedReleaseOnStartup = useRef(false);
   const [releaseDismiss, setReleaseDismiss] = useState({ pending: false, error: '' });
   const [widgetsOpen, setWidgetsOpen] = useState(false);
   const [widgetSection, setWidgetSection] = useState<WidgetSection>('all');
   const [widgetQuery, setWidgetQuery] = useState('');
   const { items, ready: widgetsReady } = useWidgets();
   const [settings, setSettings] = useState(defaults);
+  const { tint, material: dockMaterial, ...dockAppearance } = useDockAppearance(settings);
   const [appearance, setAppearance] = useState(defaultAppAppearance);
   const [appearanceLoaded, setAppearanceLoaded] = useState(false);
   const [appearanceSave, setAppearanceSave] = useState({ pending: false, error: '' });
@@ -267,8 +270,19 @@ function SettingsApp() {
     if (!desktop) return;
     let alive = true;
     void invoke<InstalledReleaseNotes | null>('read_whats_new')
-      .then((notes) => { if (alive) setRelease(notes ?? undefined); })
-      .catch(console.error);
+      .then((notes) => {
+        if (!alive) return;
+        setRelease(notes ?? null);
+        if (notes) {
+          selectedReleaseOnStartup.current = true;
+          setWidgetsOpen(false);
+          setTab('whats-new');
+        }
+      })
+      .catch((error) => {
+        if (alive) setRelease(null);
+        console.error(error);
+      });
     return () => { alive = false; };
   }, []);
 
@@ -290,7 +304,7 @@ function SettingsApp() {
       showPage(payload);
     });
     void subscription.then(() => invoke<boolean>('read_settings_page')).then((widgets) => {
-      if (!changed && typeof widgets === 'boolean') showPage(widgets);
+      if (!changed && !selectedReleaseOnStartup.current && typeof widgets === 'boolean') showPage(widgets);
     }).catch(console.error);
     return () => { disposed = true; void subscription.then((unlisten) => unlisten()).catch(console.error); };
   }, []);
@@ -345,7 +359,7 @@ function SettingsApp() {
       return;
     }
     const focused = document.activeElement;
-    setRelease(undefined);
+    setRelease(null);
     setTab((current) => current === 'whats-new' ? 'dock' : current);
     setReleaseDismiss({ pending: false, error: '' });
     if (focused === button || focused === document.body) {
@@ -378,11 +392,11 @@ function SettingsApp() {
   const pageSaving = appAppearancePage ? appearanceSave.pending : saving;
   const pageError = appAppearancePage ? appearanceSave.error : status;
 
-  return <div className="app-shell" data-theme={appearance.theme} data-material={settings.material} data-native={desktop || undefined}
+  return <div className="app-shell" data-theme={appearance.theme} data-material={dockMaterial} {...dockAppearance} data-native={desktop || undefined}
     data-blur-off={appearance.blurAmount === 0 || undefined}
     style={{ ...appIconStyle(settings), '--app-tint': appearance.tintColor, '--app-blur': appearance.blurAmount / 100,
       '--app-tint-strength': appearance.tintAmount / 100,
-      '--on-accent': contrastingInk(appearance.tintColor), '--dock-tint': settings.tintColor } as CSSProperties}>
+      '--on-accent': contrastingInk(appearance.tintColor), '--dock-tint': tint } as CSSProperties}>
     <header className="titlebar" data-tauri-drag-region>
       {settings.dockSnow && <SurfaceSnow theme={appearance.theme} />}
       <span className="brand" data-tauri-drag-region><img className="brand-icon" src={spacebarIcon} alt="" />Spacebar</span>
@@ -421,7 +435,8 @@ function SettingsApp() {
           <div className="sidebar-foot"><span className="platform-icon"><AppWindow size={15} /></span><div>Spacebar for Windows<span>Version {version}</span></div></div>
         </div>
       </aside>
-      {widgetsOpen ? <WidgetLibrary items={items} ready={widgetsReady} query={widgetQuery} selected={widgetSection} />
+      {release === undefined ? <main className="settings-page" id="settings" aria-busy="true"><p role="status">Loading settings…</p></main>
+        : widgetsOpen ? <WidgetLibrary items={items} ready={widgetsReady} query={widgetQuery} selected={widgetSection} />
         : tab === 'whats-new' && release ? <main ref={settingsPage} className="settings-page" id="settings" aria-labelledby="release-title">
           <div className="page-heading"><h1 id="release-title">{releaseTitle}</h1></div>
           <Suspense fallback={<p role="status">Loading release notes…</p>}><WhatsNewPage release={release} /></Suspense>
@@ -524,14 +539,16 @@ function SettingsApp() {
               <h2 id="material">Dock material</h2>
               <div className="material-layout">
                 <div className="material-options" role="group" aria-label="Dock material">
-                  {(['tinted', 'midnight', 'clear'] as const).map((material) => <button aria-pressed={settings.material === material} key={material} onClick={() => update('material', material)}>
-                    <span className="material-swatch" aria-hidden="true"><span className={`material-${material}`}><i /><i /><i /></span></span><span>{material}</span>
+                  {(['tinted', 'midnight', 'clear', 'spotify'] as const).map((material) => <button aria-pressed={settings.material === material} key={material} onClick={() => update('material', material)}>
+                    <span className="material-swatch" aria-hidden="true"><span className={`material-${material}`}><i /><i /><i /></span></span><span>{material === 'spotify' ? 'Spotify' : material}</span>
                   </button>)}
                 </div>
                 <div className="settings-list tint-settings">
+                  {settings.material === 'spotify' ? <Toggle label="Frosted glass" detail="Use the current Spotify artwork color with a frosted glass finish"
+                    checked={settings.spotifyFrosted} onChange={(value) => update('spotifyFrosted', value)} /> :
                   <Row label="Tint color" detail="Colors previews and running indicators, and dock and widget surfaces in Tinted mode">
                     <HexColorControl key={resetCount} label="Tint" value={settings.tintColor} onChange={(value) => update('tintColor', value)} />
-                  </Row>
+                  </Row>}
                 </div>
               </div>
             </section>
@@ -550,7 +567,9 @@ function SettingsApp() {
             </div></section>
             {desktop && <DockExclusions />}
             <section className="setting-group" aria-labelledby="reveal"><h2 id="reveal">Auto-hide</h2><div className="settings-list">
-              <Toggle label="Automatically hide dock" detail="Reveal it from the selected screen edge" checked={settings.autoHide} onChange={(value) => update('autoHide', value)} />
+              <Toggle label="Automatically hide dock"
+                detail={settings.replaceTaskbar ? 'Reveal from the selected edge and sync Windows taskbar auto-hide' : 'Reveal it from the selected screen edge'}
+                checked={settings.autoHide} onChange={(value) => update('autoHide', value)} />
               <SegmentedSetting label="Reveal animation" value={settings.revealAnimation}
                 detail={settings.autoHide ? 'Choose how the dock slides in and out' : 'Turn on auto-hide to choose an animation'}
                 options={[['easing', 'Smooth'], ['bounce', 'Bounce']]} disabled={!settings.autoHide}

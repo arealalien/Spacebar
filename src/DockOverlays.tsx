@@ -3,17 +3,19 @@ import { Check, CircleMinus, Image as ImageIcon, LayoutGrid, LogOut, Pin, Settin
 import { useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
 import { AppIcon, appIconStyle, DockAppIcon } from './AppIcon';
 import { ColorPicker } from './ColorPicker';
+import { useDockAppearance } from './dockAppearance';
 import { SurfaceSnow } from './SurfaceSnow';
 import { WidgetSpecimen } from './WidgetFaces';
 import { useDockApps } from './useDockApps';
 import { useSurfacePayload } from './useSurfacePayload';
 import { defaults, normalizeHexColor, type DockApp, type Settings } from './model';
+import { isClockKind, isWidgetContainer, widgetCatalog } from './widgetCatalog';
 import {
-  allWidgets, audioDefaults, defaultSpacerSize, dockPopupAnchor, editWidgets, hasWidgetSurface, maxSpacerSize,
-  minSpacerSize, removeWidget, resizeSpacer, rowApps, setWidgetColor,
-  setAudioOption, setWidgetSize, supportsWidgetSize, supportsWidgetSurface, toggleWidgetSurface,
+  allWidgets, audioDefaults, clockShowsDate, containerLayout, defaultSpacerSize, dockPopupAnchor, editWidgets, hasWidgetSurface, maxSpacerSize,
+  maxChildPadding, maxChildSpacing, minSpacerSize, placeWidget, removeWidget, resizeSpacer, rowApps, setContainerLayout, setWidgetColor,
+  setAudioOption, setClockOption, setWidgetSize, supportsWidgetSize, supportsWidgetSurface, toggleWidgetPadding, toggleWidgetSurface,
   useWidgets, widgetAppearance, widgetColorOptions, widgetColorStyle, widgetColorValue, widgetNames,
-  type AudioVisualizerOptions, type WidgetDragSource, type WidgetItem, type WidgetKind, type WidgetSize,
+  type AudioVisualizerOptions, type ClockFormat, type WidgetDragSource, type WidgetItem, type WidgetKind, type WidgetSize,
 } from './widgets';
 export { dockPopupAnchor } from './widgets';
 
@@ -48,6 +50,9 @@ export function middleClick(action: () => void) {
 }
 
 const sizeLabels: Record<WidgetSize, string> = { small: 'Small', normal: 'Normal', large: 'Large' };
+const clockFormats: Record<ClockFormat, string> = { system: 'System', '12h': 'AM/PM', '24h': '24-hour' };
+const containerChoices = (Object.keys(widgetCatalog) as WidgetKind[]).filter((kind) => !isWidgetContainer(kind))
+  .sort((a, b) => widgetNames[a].localeCompare(widgetNames[b]));
 const audioOptions = [
   { key: 'audioAlignment', label: 'Bar alignment', choices: { center: 'Centered', bottom: 'Bottom' } },
   { key: 'audioSpeed', label: 'Response speed', choices: { slow: 'Slow', normal: 'Normal', fast: 'Fast' } },
@@ -99,9 +104,12 @@ function WidgetColorControls({ name, label, defaultColor, color, onChange }: {
 export function DockContextMenu() {
   const target = useSurfacePayload<MenuTarget>('context-menu-opened', 'read_context_menu');
   const settings = useSurfacePayload<Settings>('settings-changed', 'read_settings');
+  const { tint, 'data-spotify-style': spotifyStyle } = useDockAppearance(settings ?? defaults, !!target);
   const { items } = useWidgets();
   const widgetTarget = target?.type === 'widget' ? target : undefined;
   const widget = widgetTarget ? allWidgets(items).find((item) => item.id === widgetTarget.id) : undefined;
+  const container = widget && isWidgetContainer(widget.kind) ? widget : undefined;
+  const parent = widget && items.find((item) => isWidgetContainer(item.kind) && item.children?.some((child) => child.id === widget.id));
   const actionRole = widgetTarget ? undefined : 'menuitem';
   const menu = useRef<HTMLElement>(null);
   const [error, setError] = useState('');
@@ -116,7 +124,7 @@ export function DockContextMenu() {
     } catch (error) { setError(String(error)); }
   }
 
-  return <main ref={menu} className="dock-context" role={widgetTarget ? 'dialog' : 'menu'}
+  return <main ref={menu} className="dock-context" data-spotify-style={spotifyStyle} style={{ '--dock-tint': tint } as CSSProperties} role={widgetTarget ? 'dialog' : 'menu'}
     aria-label={widgetTarget ? `${widgetTarget.name} widget options` : 'Dock actions'} onContextMenu={(event) => event.preventDefault()} onKeyDown={(event) => {
     if (event.key === 'Escape') { void invoke('close_context_menu'); return; }
     if (widgetTarget) return;
@@ -147,6 +155,20 @@ export function DockContextMenu() {
           onClick={() => void run(() => editWidgets((items) => setWidgetSize(items, widget.id, size)), false)}>{label}</button>)}
       </div>
     </div>}
+    {widget && isClockKind(widget.kind) && <>
+      <div className="context-widget-options" role="group" aria-labelledby="clock-format-label">
+        <span id="clock-format-label">Time format</span>
+        <div className="context-size-options">
+          {(Object.entries(clockFormats) as [ClockFormat, string][]).map(([format, label]) => <button key={format} type="button"
+            aria-pressed={(widget.clockFormat ?? 'system') === format}
+            onClick={() => void run(() => editWidgets((items) => setClockOption(items, widget.id, 'clockFormat', format)), false)}>{label}</button>)}
+        </div>
+      </div>
+      <button type="button" aria-pressed={clockShowsDate(widget.kind, widget.showDate)}
+        onClick={() => void run(() => editWidgets((items) => setClockOption(items, widget.id, 'showDate', !clockShowsDate(widget.kind, widget.showDate))), false)}>
+        {clockShowsDate(widget.kind, widget.showDate) ? <Check size={15} /> : <Square size={15} />}Show date
+      </button>
+    </>}
     {widget && widgetColorOptions(widget.kind).map((option) => <WidgetColorControls key={`${widget.id}:${option.key}`}
       name={option.key} label={option.label} defaultColor={option.defaultColor} color={widgetColorValue(widget, option)}
       onChange={(color) => void run(() => editWidgets((items) => setWidgetColor(items, widget.id, option.key, color)), false)} />)}
@@ -159,6 +181,30 @@ export function DockContextMenu() {
           onClick={() => void run(() => editWidgets((items) => setAudioOption(items, widget.id, key, value)), false)}>{choice}</button>)}
       </div>
     </div>)}
+    {container && <div key={container.id}>
+      <form className="context-widget-options" onSubmit={(event) => {
+        event.preventDefault();
+        const data = new FormData(event.currentTarget);
+        const kind = containerChoices.find((kind) => kind === data.get('kind'));
+        if (kind) void run(() => editWidgets((items) => placeWidget(items, { type: 'new', kind }, { container: container.id })), false);
+      }}>
+        <label htmlFor="container-widget">Add widget</label>
+        <div className="context-option-input"><select id="container-widget" name="kind">
+          {containerChoices.map((kind) => <option key={kind} value={kind}>{widgetNames[kind]}</option>)}
+        </select><button type="submit">Add</button></div>
+      </form>
+      <form className="context-widget-options" onSubmit={(event) => {
+        event.preventDefault();
+        const data = new FormData(event.currentTarget);
+        void run(() => editWidgets((items) => setContainerLayout(items, container.id, Number(data.get('spacing')), Number(data.get('padding')))), false);
+      }}>
+        <div className="context-container-spacing">
+          <label>Spacing (px)<input name="spacing" type="number" required min={0} max={maxChildSpacing} defaultValue={containerLayout(container).spacing} /></label>
+          <label>Padding (px)<input name="padding" type="number" required min={0} max={maxChildPadding} defaultValue={containerLayout(container).padding} /></label>
+        </div>
+        <button type="submit">Apply spacing and padding</button>
+      </form>
+    </div>}
     {widget && supportsWidgetSurface(widget.kind) && (['background', 'frame'] as const).map((option) => {
       const checked = hasWidgetSurface(widget, option);
       const Icon = checked ? Check : Square;
@@ -167,6 +213,10 @@ export function DockContextMenu() {
         <Icon size={15} />{option === 'background' ? 'Show background' : 'Show frame'}
       </button>;
     })}
+    {widget && <button type="button" aria-pressed={!!widget.noPadding}
+      onClick={() => void run(() => editWidgets((items) => toggleWidgetPadding(items, widget.id)), false)}>
+      {widget.noPadding ? <Check size={15} /> : <Square size={15} />}No padding
+    </button>}
     {widget?.kind === 'spacer' && <form key={widget.id} className="context-widget-options" onSubmit={(event) => {
       event.preventDefault();
       const size = Number(new FormData(event.currentTarget).get('size'));
@@ -177,7 +227,8 @@ export function DockContextMenu() {
         defaultValue={widget.spacerSize ?? defaultSpacerSize} aria-describedby="spacer-unit" />
         <span id="spacer-unit">px</span><button type="submit">Apply</button></div>
     </form>}
-    {widgetTarget && <button type="button" className="context-danger" onClick={() => void run(() => editWidgets((items) => removeWidget(items, widgetTarget.id)))}><CircleMinus size={15} />Remove widget</button>}
+    {widget && parent && <button type="button" onClick={() => void run(() => editWidgets((items) => placeWidget(items, { type: 'item', id: widget.id }, { before: parent.id })))}>Move to dock</button>}
+    {widgetTarget && <button type="button" className="context-danger" onClick={() => void run(() => editWidgets((items) => removeWidget(items, widgetTarget.id)))}><CircleMinus size={15} />{container ? 'Ungroup widgets' : 'Remove widget'}</button>}
     {target.type === 'app' && (target.pinned || target.can_pin) && <button type="button" role="menuitem" onClick={() => void run(() => invoke('set_app_pinned', { id: target.id, pinned: !target.pinned }))}>
       {target.pinned ? <CircleMinus size={15} /> : <Pin size={15} />}{target.pinned ? 'Unpin from dock' : 'Pin to dock'}
     </button>}
@@ -198,14 +249,15 @@ export function DockContextMenu() {
 export function DragPreview() {
   const source = useSurfacePayload<WidgetDragSource>('drag-preview', 'read_drag_preview');
   const settings = useSurfacePayload<Settings>('settings-changed', 'read_settings') ?? defaults;
+  const { tint, material, ...appearance } = useDockAppearance(settings, !!source);
   const { items } = useWidgets();
   const item = source?.type === 'item' ? allWidgets(items).find((item) => item.id === source.id) : undefined;
   const kind = source?.type === 'new' ? source.kind : item?.kind;
   const { apps } = useDockApps(kind === 'apps');
   if (!source) return null;
   const app = source.type === 'app' ? source.app : item?.kind === 'app' ? { id: item.appId ?? '', icon: item.icon } : undefined;
-  return <div className={`drag-preview${app ? ' drag-preview-app' : ''}`} data-material={settings.material} aria-hidden="true"
-    style={{ ...widgetColorStyle(item), ...appIconStyle(settings), '--dock-tint': settings.tintColor } as CSSProperties} {...(item && widgetAppearance(item))}>
+  return <div className={`drag-preview${app ? ' drag-preview-app' : ''}`} data-material={material} {...appearance} aria-hidden="true"
+    style={{ ...widgetColorStyle(item), ...appIconStyle(settings), '--dock-tint': tint } as CSSProperties} {...(item && widgetAppearance(item))}>
     {app ? <DockAppIcon app={app} /> : kind && kind !== 'app' && <WidgetSpecimen kind={kind} apps={kind === 'apps' ? rowApps(apps, items) : apps} item={item} live />}
   </div>;
 }

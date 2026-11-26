@@ -1,25 +1,22 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Minus, Orbit, Settings2 } from 'lucide-react';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentPropsWithRef, type CSSProperties, type PointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentPropsWithRef, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { defaults, demoApps, readSettings, subscribeSettings, verticalDock, type DockApp, type Settings } from './model';
 import { followPopupMotion, magnification } from './dockMotion';
 import { AppIcon, appIconStyle, DockAppIcon, NotificationBadge, notificationLabel } from './AppIcon';
 import { DockEffects, DockSnowCap } from './DockEffects';
 import { DockSnow } from './dockSnow';
+import { useDockAppearance } from './dockAppearance';
 import { appMenuTarget, dockPopupAnchor, middleClick, openDockMenu, widgetMenuTarget } from './DockOverlays';
 import { preferredWidgetWidth, WidgetFace } from './WidgetFaces';
 import { useDockApps } from './useDockApps';
-import { isLayoutWidget, isSpotifyKind, isStartWidget, widgetCatalog } from './widgetCatalog';
+import { isLayoutWidget, isSpotifyKind, isStartWidget, isWidgetContainer, widgetCatalog } from './widgetCatalog';
 import {
-  defaultSpacerSize, editWidgets, hasWidgetSurface, placeWidget, removeWidget, rowApps, supportsWidgetSurface,
+  containerLayout, defaultSpacerSize, editWidgets, hasWidgetSurface, placeWidget, removeWidget, rowApps,
   useWidgetDrag, useWidgets, widgetAppearance, widgetColorStyle, widgetNames, widgetScale,
   type WidgetDrag, type WidgetItem, type WidgetKind, type WidgetTarget,
 } from './widgets';
-
-function fillsDock(item: WidgetItem) {
-  return supportsWidgetSurface(item.kind) && item.frame === false;
-}
 
 function dockMetrics(settings: Settings, items: WidgetItem[], count: number, available = Infinity) {
   const displayed = items.filter((item) => item.kind !== 'apps' || count > 0);
@@ -31,8 +28,6 @@ function dockMetrics(settings: Settings, items: WidgetItem[], count: number, ava
   const size = settings.iconSize;
   const appSize = size * widgetScale(row?.size);
   const padding = settings.padding;
-  const framelessInset = clear ? padding : Math.min(padding, 3);
-  const frameAllowance = 2 * (padding - framelessInset);
   const clearGrowth = clear ? 15 : 0;
   const cardHeight = (item: WidgetItem) => size * widgetScale(item.size) + 7 + clearGrowth;
   const isSquare = (kind: WidgetItem['kind']) => kind !== 'app' && widgetCatalog[kind].width === 0;
@@ -52,16 +47,10 @@ function dockMetrics(settings: Settings, items: WidgetItem[], count: number, ava
   const chrome = 2 * padding + (gear ? 31 : 0) + Number(divider);
   const elements = displayed.length + Number(gear) + Number(divider);
   const gaps = Math.max(0, elements - 1) + (row ? Math.max(0, count - 1) : 0);
-  const desired = displayed.reduce((sum, item) => sum + (item.kind === 'apps' ? count * appSize : widgetLength(item)), 0);
   const cards = displayed.filter((item) => item.kind !== 'apps' && !isLayoutWidget(item.kind));
-  const squareAllowance = (item: WidgetItem) => fillsDock(item) && isSquare(item.kind) ? frameAllowance : 0;
-  const fixedLength = cards.reduce((sum, item) => sum + squareAllowance(item), 0);
   const room = Math.max(0, available - chrome);
   const spacing = Math.min(settings.spacing, room / Math.max(1, gaps) / 4);
-  const factor = desired > 0 ? Math.max(.12, Math.min(1, (room - spacing * gaps - fixedLength) / desired)) : 1;
-  const iconSize = appSize * factor;
-  const rowDepth = iconSize + 7;
-  function cardDepth(item: WidgetItem) {
+  function cardDepth(item: WidgetItem, factor: number) {
     const { kind } = item;
     if (isStartWidget(kind)) return widgetLength(item) * factor;
     const height = cardHeight(item) * factor;
@@ -73,18 +62,81 @@ function dockMetrics(settings: Settings, items: WidgetItem[], count: number, ava
     const width = kind === 'app' ? 0 : widgetCatalog[kind].width;
     return Math.max(Math.min(100, width) * scale, Math.min(156, width * .83) * scale * factor, height);
   }
-  const contentDepth = cards.reduce((depth, item) => Math.max(depth, cardDepth(item)), row ? rowDepth : iconSize);
+  function containerBox(item: WidgetItem, factor: number) {
+    const layout = containerLayout(item);
+    const scale = layout.scale * widgetScale(item.size);
+    const gap = layout.spacing * widgetScale(item.size) * factor;
+    const padding = layout.padding * widgetScale(item.size) * factor;
+    const children = (item.children ?? []).filter((child) => child.kind !== 'apps' || count > 0).map((child) => {
+      const iconSize = size * widgetScale(child.size) * factor * scale;
+      const slotExtra = 7 * scale * factor;
+      const apps = child.kind === 'apps';
+      const along = apps ? count * iconSize + Math.max(0, count - 1) * gap : widgetLength(child) * factor * scale;
+      const across = apps ? iconSize + slotExtra : isLayoutWidget(child.kind) ? 0 : cardDepth(child, factor) * scale;
+      return { item: child, along, across, iconSize, slotExtra };
+    });
+    const innerDepth = children.reduce((depth, child) => Math.max(depth, child.across), 0)
+      || cardHeight(item) * layout.scale * factor;
+    const fitted = children.map((child) => {
+      const stretch = child.item.noPadding && child.across > 0 && child.item.kind !== 'apps';
+      return { ...child, along: stretch ? child.along * innerDepth / child.across : child.along,
+        across: stretch || !child.across ? innerDepth : child.across };
+    });
+    const length = fitted.reduce((sum, child) => sum + child.along, 0) + Math.max(0, fitted.length - 1) * gap;
+    return { gap, padding, children: fitted, depth: innerDepth + 2 * padding,
+      length: (fitted.length ? length : Math.max(innerDepth, widgetCatalog[item.kind as WidgetKind].width * factor)) + 2 * padding };
+  }
+  function measure(factor: number) {
+    const iconSize = appSize * factor;
+    const baseDepth = iconSize + (row || (gear && !vertical) ? 7 : 0);
+    const containers = new Map(cards.filter((item) => isWidgetContainer(item.kind)).map((item) => [item.id, containerBox(item, factor)]));
+    const depthFor = (item: WidgetItem) => containers.get(item.id)?.depth ?? cardDepth(item, factor);
+    const contentDepth = cards.reduce((depth, item) => Math.max(depth, depthFor(item)), baseDepth);
+    const height = contentDepth + 2 * padding;
+    const lengthFor = (item: WidgetItem) => {
+      const length = containers.get(item.id)?.length ?? widgetLength(item) * factor;
+      return item.noPadding && !isLayoutWidget(item.kind) ? length * height / depthFor(item) : length;
+    };
+    const length = displayed.reduce((sum, item) => sum + (item.kind === 'apps' ? count * iconSize : lengthFor(item)), 0);
+    return { iconSize, contentDepth, height, lengthFor, depthFor, containers, width: chrome + length + spacing * gaps };
+  }
+  let factor = 1;
+  let metrics = measure(factor);
+  if (metrics.width > available) {
+    // A flush widget's length depends on the final dock depth, so fit both axes together.
+    let lower = .12;
+    let upper = 1;
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const candidate = (lower + upper) / 2;
+      if (measure(candidate).width <= available) lower = candidate;
+      else upper = candidate;
+    }
+    factor = lower;
+    metrics = measure(factor);
+  }
+  const { iconSize, contentDepth, height, lengthFor, depthFor, containers, width } = metrics;
   function widgetSizeFor(item: WidgetItem) {
-    const along = widgetLength(item) * factor + squareAllowance(item);
-    const across = isLayoutWidget(item.kind) ? contentDepth : cardDepth(item) + (fillsDock(item) ? frameAllowance : 0);
+    const along = lengthFor(item);
+    const depth = isLayoutWidget(item.kind) ? contentDepth : depthFor(item);
+    const across = item.noPadding ? height : depth;
     const unit = Math.max(1, Math.min(along, across) - (isStartWidget(item.kind) ? 0 : 7));
     return { width: vertical ? across : along, height: vertical ? along : across, unit };
   }
+  function containerSizeFor(item: WidgetItem) {
+    const box = containers.get(item.id);
+    if (!box) return;
+    const scale = item.noPadding ? height / box.depth : 1;
+    return { gap: box.gap * scale, padding: box.padding * scale, children: box.children.map((child) => ({
+      item: child.item, iconSize: child.iconSize * scale, slotExtra: child.slotExtra * scale,
+      width: (vertical ? child.across : child.along) * scale,
+      height: (vertical ? child.along : child.across) * scale,
+      unit: Math.max(1, Math.min(child.along, child.across) * scale - child.slotExtra * scale),
+    })) };
+  }
   return {
     displayed, gear, divider, spacing, iconSize,
-    width: elements ? chrome + desired * factor + fixedLength + spacing * gaps : 0,
-    height: contentDepth + 2 * padding,
-    filledRowDepth: rowDepth + frameAllowance, framelessInset, widgetSizeFor,
+    width: elements ? width : 0,
+    height, widgetSizeFor, containerSizeFor,
   };
 }
 
@@ -96,25 +148,28 @@ function AppButton({ app, rowId, preview, editing, ...props }: ComponentPropsWit
 
 function RemoveBadge({ item, onError }: { item: WidgetItem; onError: (error: unknown) => void }) {
   const name = item.name ?? widgetNames[item.kind as WidgetKind];
-  return <button type="button" data-no-drag className="dock-remove-widget" aria-label={`Remove ${name} widget`} title={`Remove ${name}`}
+  const label = isWidgetContainer(item.kind) ? `Ungroup ${name.toLowerCase()}` : `Remove ${name}`;
+  return <button type="button" data-no-drag className="dock-remove-widget" aria-label={label} title={label}
     onClick={() => void editWidgets((items) => removeWidget(items, item.id)).catch(onError)}><Minus size={11} strokeWidth={3} /></button>;
 }
 
-function WidgetBlock({ item, apps, width, height, unit, shift, preview, active, editing, highlight, snow, onError }: {
+function WidgetBlock({ item, apps, width, height, unit, shift, preview, active, editing, highlight, snow, content, onError }: {
   item: WidgetItem; apps: DockApp[]; width: number; height: number; unit: number; shift: number; preview: boolean; active: boolean;
-  editing: boolean; highlight: string; snow?: DockSnow; onError: (error: unknown) => void;
+  editing: boolean; highlight: string; snow?: DockSnow; content?: ReactNode; onError: (error: unknown) => void;
 }) {
   const drag = useWidgetDrag({ type: 'item', id: item.id }, !preview);
-  const fill = fillsDock(item);
   return <div className={`dock-widget dock-widget-${item.kind} ${highlight}`} data-dock-widget={item.id} data-kind={item.kind}
-    data-fill-dock={fill} data-widget-size={item.size ?? 'normal'}
+    data-fill-dock={item.noPadding} data-widget-size={item.size ?? 'normal'}
     style={{ ...widgetColorStyle(item), width, height, '--widget-shift': `${shift}px`, '--widget-unit': `${unit}px` } as CSSProperties}
     {...widgetAppearance(item)} {...drag}
+    onPointerDown={(event) => {
+      if ((event.target as HTMLElement).closest('[data-dock-widget]') === event.currentTarget) drag.onPointerDown(event);
+    }}
     onContextMenu={preview ? undefined : (event) => openDockMenu(event, widgetMenuTarget(item), onError)}>
-    <WidgetFace item={item} apps={apps} specimen={preview} active={active} onError={onError} onFolder={(button) => {
+    {content ?? <WidgetFace item={item} apps={apps} specimen={preview} active={active} onError={onError} onFolder={(button) => {
       if (preview) return;
       void invoke('open_folder', { id: item.id, anchor: dockPopupAnchor(button) }).catch(onError);
-    }} />
+    }} />}
     {snow && (hasWidgetSurface(item, 'background') || hasWidgetSurface(item, 'frame')) &&
       <DockSnowCap id={'widget:' + item.id} snow={snow} />}
     {editing && <RemoveBadge item={item} onError={onError} />}
@@ -176,21 +231,37 @@ function appDropTarget(row: HTMLElement | undefined, drag: WidgetDrag, id: strin
 }
 
 function dropTarget(body: HTMLElement, drag: WidgetDrag, vertical: boolean): DockDropTarget | undefined {
-  const blocks = [...body.querySelectorAll<HTMLElement>(':scope > [data-dock-widget]')].map((node) => ({ node, bounds: node.getBoundingClientRect() }));
+  const blocksIn = (element: HTMLElement) => [...element.querySelectorAll<HTMLElement>(':scope > [data-dock-widget]')]
+    .map((node) => ({ node, bounds: node.getBoundingClientRect() }));
+  const blocks = blocksIn(body);
   const source = drag.source;
-  const kind = source.type === 'new' ? source.kind : source.type === 'item' ? blocks.find(({ node }) => node.dataset.dockWidget === source.id)?.node.dataset.kind : undefined;
-  const folder = kind !== 'folder' && !isLayoutWidget(kind ?? '') && blocks.find(({ node, bounds }) => node.dataset.kind === 'folder' && (vertical
-    ? drag.y >= bounds.top + bounds.height * .18 && drag.y <= bounds.bottom - bounds.height * .18 && drag.x >= bounds.left - 8 && drag.x <= bounds.right + 8
-    : drag.x >= bounds.left + bounds.width * .18 && drag.x <= bounds.right - bounds.width * .18 && drag.y >= bounds.top - 8 && drag.y <= bounds.bottom + 8));
+  const all = [...body.querySelectorAll<HTMLElement>('[data-dock-widget]')];
+  const kind = source.type === 'new' ? source.kind
+    : source.type === 'item' ? all.find((node) => node.dataset.dockWidget === source.id)?.dataset.kind ?? '' : 'app';
+  const main = vertical ? drag.y : drag.x;
+  const cross = vertical ? drag.x : drag.y;
+  const start = (bounds: DOMRect) => vertical ? bounds.top : bounds.left;
+  const length = (bounds: DOMRect) => vertical ? bounds.height : bounds.width;
+  const hit = (bounds: DOMRect) => {
+    const inset = Math.min(8, length(bounds) * .18);
+    return main >= start(bounds) + inset && main <= start(bounds) + length(bounds) - inset
+      && cross >= (vertical ? bounds.left : bounds.top) - 8 && cross <= (vertical ? bounds.right : bounds.bottom) + 8;
+  };
+  const group = blocks.find(({ node, bounds }) => isWidgetContainer(node.dataset.kind ?? '') && hit(bounds));
+  const groupFace = group?.node.querySelector<HTMLElement>(':scope > .widget-container-face');
+  const children = groupFace ? blocksIn(groupFace) : [];
+  const folder = kind !== 'folder' && !isLayoutWidget(kind) && !isWidgetContainer(kind)
+    && [...children, ...blocks].find(({ node, bounds }) => node.dataset.kind === 'folder' && hit(bounds));
   if (folder) return { folder: folder.node.dataset.dockWidget };
   if (source.type === 'app') {
-    const row = blocks.find(({ node }) => node.dataset.kind === 'apps')?.node;
+    const row = all.find((node) => node.dataset.kind === 'apps');
     const app = appDropTarget(row, drag, source.app.id, vertical);
     if (app) return { app };
     return;
   }
-  const before = blocks.find(({ bounds }) => vertical ? drag.y < bounds.top + bounds.height / 2 : drag.x < bounds.left + bounds.width / 2);
-  return { before: before?.node.dataset.dockWidget };
+  const intoGroup = group && !isWidgetContainer(kind) && kind !== 'app';
+  const before = (intoGroup ? children : blocks).find(({ bounds }) => main < start(bounds) + length(bounds) / 2);
+  return { container: intoGroup ? group.node.dataset.dockWidget : undefined, before: before?.node.dataset.dockWidget };
 }
 
 export function Dock({ settings, apps, allApps, items, drag, preview = false, editing = false, contextOpen = false, revealed = true, onSettings, onActivate, onDrop, onMoveApp, onMeasure, onError }: {
@@ -224,6 +295,7 @@ export function Dock({ settings, apps, allApps, items, drag, preview = false, ed
   const appRow = useRef<HTMLDivElement>(null);
   const positions = useRef(new Map<string, number>());
   const priorOrder = useRef('');
+  const { tint, material, ...appearance } = useDockAppearance(settings);
   const clickedApp = useRef<string>(undefined);
   const visible = preview ? !settings.autoHide || demoVisible : revealed;
   const resting = !visible || !!drag || editing || contextOpen;
@@ -232,8 +304,8 @@ export function Dock({ settings, apps, allApps, items, drag, preview = false, ed
   const windowSignature = hovered?.windows.length ? JSON.stringify(hovered.windows) : '';
   const vertical = verticalDock(settings.edge);
   const usable = available;
-  const { displayed, gear, divider, width, height, filledRowDepth, framelessInset, spacing, iconSize, widgetSizeFor } = dockMetrics(settings, items, apps.length, usable || Infinity);
-  const zoom = settings.magnify && motionAllowed ? settings.zoom : 1;
+  const { displayed, gear, divider, width, height, spacing, iconSize, widgetSizeFor, containerSizeFor } = dockMetrics(settings, items, apps.length, usable || Infinity);
+  const zoom = displayed.some((item) => item.kind === 'apps') && settings.magnify && motionAllowed ? settings.zoom : 1;
   const room = Math.max(0, usable - width);
   const motion = magnification(apps.length, resting ? undefined : hover?.position, iconSize, zoom, settings.falloff, room, room / 2, settings.alignment);
   const playingClick = motionAllowed && visible && !resting && clickPulse?.effect === settings.appIconClickEffect ? clickPulse : undefined;
@@ -242,7 +314,7 @@ export function Dock({ settings, apps, allApps, items, drag, preview = false, ed
   const rowIndex = displayed.findIndex((item) => item.kind === 'apps');
   const target = drag?.inside && body.current ? dropTarget(body.current, drag, vertical) : undefined;
   const draggedApp = drag?.source.type === 'app' ? drag.source.app.id : undefined;
-  const highlight = (id: string) => target?.folder === id ? 'drop-folder' : target?.before === id ? 'drop-before' : '';
+  const highlight = (id: string) => (target?.folder === id || target?.container === id) ? 'drop-folder' : target?.before === id ? 'drop-before' : '';
 
   useLayoutEffect(() => { onMeasure?.(height); }, [height, onMeasure]);
 
@@ -394,9 +466,9 @@ export function Dock({ settings, apps, allApps, items, drag, preview = false, ed
     : 'cubic-bezier(.2,.75,.25,1)';
   const style = {
     ...appIconStyle(settings),
-    '--dock-tint': settings.tintColor, '--icon-size': `${iconSize}px`, '--dock-gap': `${spacing}px`,
+    '--dock-tint': tint, '--icon-size': `${iconSize}px`, '--dock-gap': `${spacing}px`,
     '--dock-align': settings.alignment === 'start' ? 'flex-start' : settings.alignment === 'end' ? 'flex-end' : 'center',
-    '--dock-padding': `${settings.padding}px`, '--frameless-outset': `${framelessInset - settings.padding}px`,
+    '--dock-padding': `${settings.padding}px`,
     '--dock-duration': `${settings.duration}ms`, '--dock-offset': `${settings.offset}px`, '--end-shift': `${motion.end}px`,
     '--dock-snow-headroom': `${snow && !preview ? Math.min(24, settings.offset) : 0}px`,
     '--surface-shift': `${(motion.end - motion.start) / 2}px`,
@@ -404,20 +476,9 @@ export function Dock({ settings, apps, allApps, items, drag, preview = false, ed
     '--reveal-duration': `${settings.revealDuration}ms`, '--reveal-curve': revealCurve,
   } as CSSProperties;
 
-  return (
-    <div ref={frame} className={`dock-frame ${preview ? 'dock-sample' : 'dock-desktop'}`} style={style} data-edge={settings.edge} data-material={settings.material} data-vertical={vertical} data-span={settings.fullSpan} onPointerLeave={() => setDemoVisible(false)}>
-      {snow &&
-        <DockEffects frame={frame} body={body} settings={settings} visible={visible} motion={motionAllowed} preview={preview} snow={snow} />}
-      {preview && settings.autoHide && <button className="demo-edge" aria-label="Reveal dock preview" onPointerEnter={() => setDemoVisible(true)} onFocus={() => setDemoVisible(true)} onClick={() => setDemoVisible(true)} />}
-      <div ref={body} className={`dock-body${visible ? '' : ' dock-hidden'}${target && !target.before && !target.folder ? ' drop-end' : ''}`} inert={!visible} aria-label={preview ? 'Interactive dock preview' : 'Spacebar dock'} data-editing={editing}
-        onPointerMove={trackPointer} onPointerLeave={() => { clickedApp.current = undefined; setOverSettings(false); setHover(undefined); }}
-        onContextMenu={preview ? undefined : (event) => openDockMenu(event, { type: 'dock' }, onError)}
-        onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) { setOverSettings(false); setHover(undefined); } }}>
-        {settings.material !== 'clear' && <span className={`dock-surface material-${settings.material}`} aria-hidden="true">
-          {snow && <DockSnowCap id="dock" snow={snow} />}
-        </span>}
-        {displayed.map((item, widgetIndex) => item.kind === 'apps' ? <div className={`dock-app-row ${highlight(item.id)}`} key={item.id} ref={appRow} data-dock-widget={item.id} data-kind="apps"
-          data-fill-dock={fillsDock(item)} style={fillsDock(item) ? (vertical ? { width: filledRowDepth } : { height: filledRowDepth }) : undefined} {...widgetAppearance(item)}
+  function renderAppRow(item: WidgetItem, compactStyle?: CSSProperties) {
+    return (<div className={`dock-app-row ${highlight(item.id)}`} key={item.id} ref={appRow} data-dock-widget={item.id} data-kind="apps"
+          data-fill-dock={item.noPadding} style={compactStyle ?? (item.noPadding ? (vertical ? { width: height } : { height }) : undefined)} {...widgetAppearance(item)}
           onContextMenu={preview ? undefined : (event) => openDockMenu(event, widgetMenuTarget(item), onError)}>
         {apps.map((app, index) => {
           const { scale, shift } = motion.icons[index];
@@ -471,8 +532,37 @@ export function Dock({ settings, apps, allApps, items, drag, preview = false, ed
           );
         })}
         {editing && <RemoveBadge item={item} onError={onError} />}
-        </div> : <WidgetBlock key={item.id} item={item} apps={allApps} {...widgetSizeFor(item)}
-          shift={rowIndex < 0 ? 0 : widgetIndex < rowIndex ? -motion.start : motion.end} preview={preview} active={visible} editing={editing} highlight={highlight(item.id)} snow={snow} onError={onError} />)}
+        </div>);
+  }
+
+  function renderWidget(item: WidgetItem, shift: number) {
+    if (item.kind === 'apps') return renderAppRow(item);
+    const group = containerSizeFor(item);
+    const props = { apps: allApps, preview, active: visible, editing, snow, onError };
+    return <WidgetBlock key={item.id} item={item} {...props} {...widgetSizeFor(item)} shift={shift} highlight={highlight(item.id)}
+      content={group && <div className="widget-face widget-container-face" role="group" tabIndex={preview ? undefined : 0}
+        aria-label={widgetNames[item.kind as WidgetKind]} style={{ gap: group.gap, padding: group.padding }}>
+        {group.children.length ? group.children.map(({ item: child, iconSize, slotExtra, ...box }) => child.kind === 'apps'
+          ? renderAppRow(child, { width: box.width, height: box.height, '--icon-size': iconSize + 'px',
+            '--dock-gap': group.gap + 'px', '--app-slot-extra': slotExtra + 'px' } as CSSProperties)
+          : <WidgetBlock key={child.id} item={child} {...props} {...box} shift={0} highlight={highlight(child.id)} />)
+          : <span className="widget-container-empty">Drop widgets here</span>}
+      </div>} />;
+  }
+
+  return (
+    <div ref={frame} className={`dock-frame ${preview ? 'dock-sample' : 'dock-desktop'}`} style={style} data-edge={settings.edge} data-material={material} {...appearance} data-vertical={vertical} data-span={settings.fullSpan} onPointerLeave={() => setDemoVisible(false)}>
+      {snow &&
+        <DockEffects frame={frame} body={body} settings={settings} visible={visible} motion={motionAllowed} preview={preview} snow={snow} />}
+      {preview && settings.autoHide && <button className="demo-edge" aria-label="Reveal dock preview" onPointerEnter={() => setDemoVisible(true)} onFocus={() => setDemoVisible(true)} onClick={() => setDemoVisible(true)} />}
+      <div ref={body} className={`dock-body${visible ? '' : ' dock-hidden'}${target && !target.before && !target.folder && !target.container && !target.app ? ' drop-end' : ''}`} inert={!visible} aria-label={preview ? 'Interactive dock preview' : 'Spacebar dock'} data-editing={editing}
+        onPointerMove={trackPointer} onPointerLeave={() => { clickedApp.current = undefined; setOverSettings(false); setHover(undefined); }}
+        onContextMenu={preview ? undefined : (event) => openDockMenu(event, { type: 'dock' }, onError)}
+        onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) { setOverSettings(false); setHover(undefined); } }}>
+        {material !== 'clear' && <span className={`dock-surface material-${material}`} aria-hidden="true">
+          {snow && <DockSnowCap id="dock" snow={snow} />}
+        </span>}
+        {displayed.map((item, index) => renderWidget(item, rowIndex < 0 ? 0 : index < rowIndex ? -motion.start : motion.end))}
         {!width && drag && <span className="dock-empty-drop">Drop a widget here</span>}
         {divider && <span className="dock-divider" />}
         {gear && <button className="dock-settings" onFocus={() => setOverSettings(true)} onClick={onSettings} title="Spacebar settings" aria-label="Spacebar settings">
@@ -517,7 +607,9 @@ export function DesktopDock() {
   }, []);
 
   const visibleApps = rowApps(apps, items);
-  const count = items.some((item) => item.kind === 'apps') ? visibleApps.length : 0;
+  const hasAppRow = items.some((item) => item.kind === 'apps'
+    || (isWidgetContainer(item.kind) && item.children?.some((child) => child.kind === 'apps')));
+  const count = hasAppRow ? visibleApps.length : 0;
   const { width: layoutWidth, iconSize: layoutIconSize } = dockMetrics(settings, items, count);
 
   useEffect(() => {

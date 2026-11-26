@@ -55,10 +55,10 @@ pub struct AudioSnapshot {
     input: Option<AudioLevel>,
 }
 
-struct Com;
+pub(crate) struct Com;
 
 impl Com {
-    fn enter(mode: COINIT) -> windows::core::Result<Self> {
+    pub(crate) fn enter(mode: COINIT) -> windows::core::Result<Self> {
         unsafe {
             CoInitializeEx(None, mode).ok()?;
         }

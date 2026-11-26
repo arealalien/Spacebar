@@ -43,6 +43,7 @@ pub(crate) enum Material {
     Tinted,
     Midnight,
     Clear,
+    Spotify,
 }
 
 #[derive(Clone, Copy)]
@@ -213,6 +214,7 @@ pub struct Settings {
     indicators: bool,
     pub(crate) notification_badges: NotificationBadges,
     pub(crate) material: Material,
+    spotify_frosted: bool,
     pub(crate) dock_snow: bool,
     tint_color: TintColor,
     accent: Accent,
@@ -251,6 +253,7 @@ impl Default for Settings {
             indicators: true,
             notification_badges: NotificationBadges::Dot,
             material: Material::Tinted,
+            spotify_frosted: true,
             dock_snow: false,
             tint_color: TintColor::default(),
             accent: Accent::Purple,
@@ -343,6 +346,17 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn spotify_material_defaults_to_frosted_and_saves_the_solid_finish() {
+        let mut settings: Settings = serde_json::from_str(r#"{"material":"spotify"}"#).unwrap();
+        assert!(matches!(settings.material, Material::Spotify));
+        assert!(settings.spotify_frosted);
+        settings.spotify_frosted = false;
+        let saved = serde_json::to_value(settings).unwrap();
+        assert_eq!(saved["material"], "spotify");
+        assert_eq!(saved["spotifyFrosted"], false);
     }
 
     #[test]

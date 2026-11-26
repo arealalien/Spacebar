@@ -1,11 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 
-export interface DrawingDocument {
-  color: string;
-  image: string | null;
-}
-
 export interface AgendaEvent {
   id: string;
   title: string;
@@ -33,7 +28,6 @@ export interface WeatherPreferences {
 
 interface WidgetDocuments {
   'quick-note': string;
-  'drawing-pad': DrawingDocument;
   agenda: AgendaEvent[];
   'quick-tasks': QuickTask[];
   'color-picker': string[];

@@ -1,6 +1,8 @@
 export const widgetCatalog = {
   apps: { name: 'App icons', detail: 'Pinned and running apps', width: 0 },
   folder: { name: 'Folder', detail: 'Group apps and widgets', width: 0 },
+  'widget-group': { name: 'Widget group', detail: 'Keep widgets together on the dock with adjustable spacing and padding', width: 128 },
+  'widget-tray': { name: 'Widget tray', detail: 'Fit more widgets into a compact strip on the dock', width: 105 },
   start: { name: 'Windows Start', detail: 'Open the native Windows Start menu', width: 0 },
   'spacebar-start': { name: 'Spacebar Start', detail: 'Search apps and access power options in a dock menu', width: 0 },
   spacer: { name: 'Spacer', detail: 'Add an adjustable gap between widgets', width: 74 },
@@ -59,6 +61,7 @@ export const isSpotifyKind = (kind: string): kind is SpotifyKind => spotifyKinds
 export const isWeatherKind = (kind: string): kind is WeatherKind => weatherKinds.some((weather) => weather === kind);
 export const isLayoutWidget = (kind: string) => kind === 'spacer' || kind === 'divider';
 export const isStartWidget = (kind: string): kind is 'start' | 'spacebar-start' => kind === 'start' || kind === 'spacebar-start';
-export const repeatableWidget = (kind: WidgetKind) => kind === 'folder' || kind === 'clock-plain' || kind === 'image' || isLayoutWidget(kind);
+export const isWidgetContainer = (kind: string): kind is 'widget-group' | 'widget-tray' => kind === 'widget-group' || kind === 'widget-tray';
+export const repeatableWidget = (kind: WidgetKind) => kind === 'folder' || kind === 'clock-plain' || kind === 'image' || isLayoutWidget(kind) || isWidgetContainer(kind);
 
 export const widgetNames = Object.fromEntries(Object.entries(widgetCatalog).map(([kind, widget]) => [kind, widget.name])) as Record<WidgetKind, string>;

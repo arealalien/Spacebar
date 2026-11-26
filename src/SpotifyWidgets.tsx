@@ -2,32 +2,17 @@ import { invoke } from '@tauri-apps/api/core';
 import { ArrowUpRight, AudioLines, Music2, Volume2, VolumeX } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { useHoverPopup, type HoverPopupKind } from './HoverPopup';
-import { defaults, desktop, type Settings } from './model';
-import { PlaybackControls, type MediaAction, type PlaybackState } from './PlaybackControls';
+import { contrastingInk, defaults, desktop, type Settings } from './model';
+import { Calendar } from './Calendar';
+import { PlaybackControls, type MediaAction } from './PlaybackControls';
 import { sampleSpotifyArtwork, type SpotifyArtworkColors } from './spotifyArtworkColors';
+import { spotify, type SpotifyTimeline, type SpotifyTrack } from './spotifyPlayback';
+import { useDockAppearance } from './dockAppearance';
 import { SurfaceSnow } from './SurfaceSnow';
 import { useSurfacePayload } from './useSurfacePayload';
 import { isWeatherKind, type SpotifyKind } from './widgetCatalog';
-import { widgetSnapshot } from './widgetSnapshots';
 import { WeatherPanel } from './WeatherWidgets';
 
-interface SpotifyTimeline {
-  position: number;
-  duration: number;
-  updatedAt: number | null;
-  playbackRate: number;
-  canSeek: boolean;
-}
-
-interface SpotifyTrack extends PlaybackState {
-  available: boolean;
-  title: string;
-  artist: string;
-  artwork?: string;
-  timeline?: SpotifyTimeline | null;
-}
-
-const spotify = widgetSnapshot<SpotifyTrack>('spotify_snapshot', 1100, 'spotify-changed');
 const previewTrack: SpotifyTrack = {
   available: true, title: 'Sample track', artist: 'Sample artist',
   playing: false, canPrevious: true, canToggle: true, canNext: true,
@@ -444,6 +429,7 @@ export function WidgetPopup() {
   const weatherKind = popup && isWeatherKind(popup.kind) ? popup.kind : undefined;
   const cleanWeather = weatherKind === 'weather';
   const settings = useSurfacePayload<Settings>('settings-changed', 'read_settings') ?? defaults;
+  const { tint, material, ...appearance } = useDockAppearance(settings, !!popup);
   const panel = useRef<HTMLElement>(null);
   const reveal = useRef(0);
   const [error, setError] = useState('');
@@ -486,7 +472,8 @@ export function WidgetPopup() {
     if (!popup || popup.closing) return;
     setError('');
     if (popup.keyboard) {
-      const target = panel.current?.querySelector<HTMLButtonElement>('button[data-control="toggle"]:enabled') ?? panel.current;
+      const selector = popup.kind === 'calendar' ? '.system-calendar-heading button' : 'button[data-control="toggle"]:enabled';
+      const target = panel.current?.querySelector<HTMLButtonElement>(selector) ?? panel.current;
       target?.focus();
     }
     const dismiss = (event: KeyboardEvent) => {
@@ -505,13 +492,20 @@ export function WidgetPopup() {
     tabIndex: -1,
     inert: popup.closing,
   };
-  if (weatherKind) {
-    const weatherFrame = cleanWeather ? {
-      ...frame, 'data-material': settings.material, style: { '--dock-tint': settings.tintColor } as CSSProperties,
-    } : frame;
-    return <WeatherPanel kind={weatherKind} frame={weatherFrame} keyboard={popup.keyboard} snow={showSnow} error={error} onError={onError} />;
+  const themedFrame = { ...frame, ...appearance, 'data-material': material, style: { '--dock-tint': tint } as CSSProperties };
+  if (popup.kind === 'calendar') {
+    return <main {...themedFrame} className="system-panel start-calendar clock-calendar-popup widget-popup-motion"
+      style={{ ...themedFrame.style, '--calendar-day-ink': material === 'tinted' ? contrastingInk(tint) : undefined } as CSSProperties}
+      role="dialog" aria-label="Clock calendar">
+      {showSnow && <SurfaceSnow />}
+      <Calendar key={popup.id} />
+    </main>;
   }
-  return <main {...frame} className="spotify-player spotify-popup widget-popup-motion" role="dialog" aria-label="Spotify playback">
+  if (weatherKind) {
+    return <WeatherPanel kind={weatherKind} frame={cleanWeather || appearance['data-spotify-style'] ? themedFrame : frame}
+      keyboard={popup.keyboard} snow={showSnow} error={error} onError={onError} />;
+  }
+  return <main {...themedFrame} className="spotify-player spotify-popup widget-popup-motion" role="dialog" aria-label="Spotify playback">
     {showSnow && <SurfaceSnow />}
     <SpotifyPlayerContent key={popup.id} onError={onError} />
     {error && <p className="spotify-popup-error" role="alert" title={error}>{error}</p>}

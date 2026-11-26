@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, type CSSProperties } from 'react';
 import { middleClick } from './DockOverlays';
+import { useDockAppearance } from './dockAppearance';
 import { defaults, desktop, type Settings } from './model';
 import { PlaybackControls, type PlaybackState } from './PlaybackControls';
 import { useSurfacePayload } from './useSurfacePayload';
@@ -29,6 +30,7 @@ interface PreviewLayout {
 export function WindowPreview() {
   const layout = useSurfacePayload<PreviewLayout>('preview-layout', 'read_preview_layout');
   const settings = useSurfacePayload<Settings>('settings-changed', 'read_settings');
+  const { tint, 'data-spotify-style': spotifyStyle } = useDockAppearance(settings ?? defaults, !!layout);
   const token = layout?.open ? layout.token : undefined;
   useEffect(() => {
     if (!desktop || !token) return;
@@ -45,8 +47,8 @@ export function WindowPreview() {
   }, [token]);
 
   if (!layout) return null;
-  return <div key={layout.token} className="native-preview-strip" data-open={layout.open} data-animated={layout.animated} aria-label="Open windows" inert={!layout.open}
-    style={{ '--exit-opacity': layout.exitOpacity, '--dock-tint': settings?.tintColor ?? defaults.tintColor } as CSSProperties}>
+  return <div key={layout.token} className="native-preview-strip" data-spotify-style={spotifyStyle} data-open={layout.open} data-animated={layout.animated} aria-label="Open windows" inert={!layout.open}
+    style={{ '--exit-opacity': layout.exitOpacity, '--dock-tint': tint } as CSSProperties}>
     {layout.cards.map((card) => <button key={card.id} className="native-preview-card" aria-label={`Switch to ${card.title}`}
       style={{ left: card.left, top: card.top, width: card.width, height: card.height }}
       {...middleClick(() => void invoke('close_preview_window', { id: card.id, token: layout.token }).catch(console.error))}

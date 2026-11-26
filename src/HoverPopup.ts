@@ -5,7 +5,7 @@ import { useSurfacePayload } from './useSurfacePayload';
 import { dockPopupAnchor } from './widgets';
 import type { WeatherKind } from './widgetCatalog';
 
-export type HoverPopupKind = 'spotify' | WeatherKind;
+export type HoverPopupKind = 'calendar' | 'spotify' | WeatherKind;
 
 export function useHoverPopup(face: RefObject<HTMLElement | null>, widget: string | undefined, kind: HoverPopupKind,
   onError: (error: unknown) => void = console.error) {

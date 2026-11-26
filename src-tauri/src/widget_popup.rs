@@ -30,6 +30,7 @@ const EXIT_TIMEOUT: Duration = Duration::from_millis(300);
 #[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum WidgetPopupKind {
+    Calendar,
     Spotify,
     Weather,
     WeatherColorful,
@@ -40,7 +41,7 @@ pub enum WidgetPopupKind {
 
 impl WidgetPopupKind {
     fn is_weather(self) -> bool {
-        self != Self::Spotify
+        matches!(self, Self::Weather | Self::WeatherColorful | Self::Weather3d | Self::WeatherAmbient)
     }
 }
 
@@ -340,7 +341,7 @@ pub fn show_widget_popup(
     }
 
     let settings = app.state::<DockStore>().current();
-    let edge = if folder && kind.is_weather() {
+    let edge = if folder && (kind.is_weather() || kind == WidgetPopupKind::Calendar) {
         DockEdge::Bottom
     } else {
         settings.edge
@@ -358,6 +359,7 @@ pub fn show_widget_popup(
     let gap = px(9.0);
     let space = popup_space(area, outside_anchor(anchor, perimeter, edge), edge, gap);
     let (width, height) = match kind {
+        WidgetPopupKind::Calendar => (302.0, 244.0),
         WidgetPopupKind::Spotify => (352.0, 282.0),
         WidgetPopupKind::Weather => (382.0, 374.0),
         WidgetPopupKind::WeatherColorful => (448.0, 496.0),
@@ -433,6 +435,13 @@ pub fn show_widget_popup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calendar_does_not_count_as_an_open_weather_forecast() {
+        let kind: WidgetPopupKind = serde_json::from_str(r#""calendar""#).unwrap();
+        assert!(kind == WidgetPopupKind::Calendar);
+        assert!(!kind.is_weather());
+    }
 
     #[test]
     fn weather_designs_can_be_saved_and_opened() {

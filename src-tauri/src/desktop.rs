@@ -858,7 +858,7 @@ fn place_dock(
     let settings = store.current();
     let replacement = app.state::<Replacement>();
     if !settings.replace_taskbar {
-        replacement.update(false)?;
+        replacement.update(false, false)?;
     }
     let area = if settings.replace_taskbar {
         monitor.rcMonitor
@@ -1019,7 +1019,7 @@ fn place_dock(
     };
     let mut dock_placement = placement.0.lock().map_err(|error| error.to_string())?;
     if dock_placement.layout == Some(new_layout) {
-        return replacement.update(settings.replace_taskbar && has_content);
+        return replacement.update(settings.replace_taskbar && has_content, settings.auto_hide);
     }
     let behind_start = overlaps_start(new_layout, app.state::<StartMenu>().panel());
     let success = unsafe {
@@ -1055,7 +1055,7 @@ fn place_dock(
             settings.reveal_duration,
         );
     }
-    replacement.update(settings.replace_taskbar && has_content)
+    replacement.update(settings.replace_taskbar && has_content, settings.auto_hide)
 }
 
 fn apply_dock_region(hwnd: HWND, layout: DockLayout, expanded: bool) -> Result<(), String> {
@@ -1775,6 +1775,12 @@ pub fn run(dock_only: bool) {
             dock_config::save_widgets,
             widget_content::read_widget_content,
             widget_content::write_widget_content,
+            widget_content::list_drawings,
+            widget_content::create_drawing,
+            widget_content::read_drawing,
+            widget_content::save_drawing,
+            widget_content::delete_drawing,
+            widget_content::export_drawing,
             widget_content::read_agenda,
             widget_content::read_quick_tasks,
             widget_content::read_weather_preferences,
@@ -1793,6 +1799,7 @@ pub fn run(dock_only: bool) {
             start_launcher::read_start_preferences,
             start_launcher::save_start_preferences,
             start_launcher::launch_start_app,
+            start_launcher::open_start_app_menu,
             start_launcher::start_action,
             media::spotify_snapshot,
             media::spotify_control,
@@ -1836,7 +1843,7 @@ pub fn run(dock_only: bool) {
         .expect("failed to run Spacebar")
         .run(|app, event| {
             if matches!(event, RunEvent::Exit) {
-                let _ = app.state::<Replacement>().update(false);
+                let _ = app.state::<Replacement>().update(false, false);
             }
         });
 }

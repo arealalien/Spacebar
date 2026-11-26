@@ -304,7 +304,7 @@ fn panel_bounds(panel: Panel, area: RECT, anchor: RECT, edge: DockEdge, scale: f
         Panel::QuickSettings | Panel::AudioOutput | Panel::Microphone => (440.0, 426.0),
         Panel::Notifications => (292.0, 298.0),
         Panel::QuickNote => (360.0, 282.0),
-        Panel::DrawingPad => (444.0, 372.0),
+        Panel::DrawingPad => (704.0, 484.0),
         Panel::Agenda => (382.0, 404.0),
         Panel::QuickTasks => (360.0, 346.0),
         Panel::ColorPicker => (332.0, 370.0),

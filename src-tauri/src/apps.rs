@@ -1,7 +1,7 @@
 use crate::{
     dock_config::DockStore,
     media::MediaIdentity,
-    notifications::{AppNotification, Notifications},
+    notifications::{current_filetime, AppNotification, MessagingApp, Notifications},
     settings::save_json,
     taskbar::{TaskbarOrder, TaskbarSnapshot},
 };
@@ -197,6 +197,7 @@ struct Catalog {
     scanned_pins: Option<Instant>,
     icons: HashMap<String, String>,
     apps: Vec<DockApp>,
+    toast_seen_through: HashMap<MessagingApp, i64>,
     preferences: PinPreferences,
 }
 
@@ -223,6 +224,24 @@ struct SavedPin {
 }
 
 impl DockApp {
+    fn messaging_app(&self) -> Option<MessagingApp> {
+        self.model_id
+            .as_deref()
+            .and_then(MessagingApp::from_identity)
+            .or_else(|| {
+                self.launch_path
+                    .as_deref()
+                    .and_then(Path::file_name)
+                    .and_then(|name| name.to_str())
+                    .and_then(MessagingApp::from_executable)
+            })
+            .or_else(|| {
+                self.shortcut_exe
+                    .as_deref()
+                    .and_then(MessagingApp::from_executable)
+            })
+    }
+
     fn order_id(&self) -> String {
         if let Some(shortcut) = &self.shortcut {
             return path_id(shortcut);
@@ -1040,8 +1059,25 @@ impl AppCatalog {
             }
             (3, 0)
         });
+        if let Some(kind) = apps
+            .iter()
+            .find(|app| app.active)
+            .and_then(DockApp::messaging_app)
+        {
+            catalog.toast_seen_through.insert(kind, current_filetime());
+        }
         for app in &mut apps {
-            app.notification = notification_for_app(app, &taskbar.notifications);
+            let messaging_app = app.messaging_app();
+            let toast = messaging_app.filter(|_| !app.active).and_then(|kind| {
+                let seen_through = catalog
+                    .toast_seen_through
+                    .get(&kind)
+                    .copied()
+                    .unwrap_or_default();
+                taskbar.notifications.toast_badge(kind, seen_through)
+            });
+            app.notification =
+                notification_for_app(app, messaging_app, &taskbar.notifications).or(toast);
         }
         order_by_live_buttons(&mut apps, taskbar);
         order_by_saved_slots(&mut apps, app_order);
@@ -1079,33 +1115,29 @@ fn order_by_saved_slots(apps: &mut [DockApp], app_order: &[String]) {
     });
 }
 
-fn notification_for_app(app: &DockApp, notifications: &Notifications) -> Option<AppNotification> {
-    // Squirrel's Windows notification IDs can survive a Discord update that changes the EXE path.
-    let discord_id = app
-        .launch_path
-        .as_deref()
-        .and_then(Path::file_name)
-        .and_then(|name| name.to_str())
-        .and_then(|name| match name.to_ascii_lowercase().as_str() {
-            "discord.exe" => Some("com.squirrel.discord.discord"),
-            "discordptb.exe" => Some("com.squirrel.discordptb.discordptb"),
-            "discordcanary.exe" => Some("com.squirrel.discordcanary.discordcanary"),
-            _ => None,
-        });
-    [app.model_id.as_deref(), Some(app.id.as_str()), discord_id]
+fn notification_for_app(
+    app: &DockApp,
+    messaging_app: Option<MessagingApp>,
+    notifications: &Notifications,
+) -> Option<AppNotification> {
+    [app.model_id.as_deref(), Some(app.id.as_str())]
         .into_iter()
         .flatten()
-        .find_map(|identity| notifications.get(identity).copied())
+        .find_map(|identity| notifications.badges.get(identity).copied())
+        .or_else(|| messaging_app.and_then(|app| notifications.messaging_badge(app)))
 }
 
 fn order_by_live_buttons(apps: &mut [DockApp], taskbar: &TaskbarSnapshot) {
     let mut matches = Vec::new();
     for (button_index, button) in taskbar.buttons.iter().enumerate() {
+        let messaging_app = MessagingApp::from_identity(&button.identity);
         for (app_index, app) in apps.iter().enumerate() {
             let score = if !button.identity.is_empty()
                 && app.model_id.as_deref() == Some(button.identity.as_str())
             {
                 9000
+            } else if messaging_app.is_some() && app.messaging_app() == messaging_app {
+                8500
             } else {
                 button.score(
                     &app.name,
@@ -1128,9 +1160,12 @@ fn order_by_live_buttons(apps: &mut [DockApp], taskbar: &TaskbarSnapshot) {
             let task = &taskbar.buttons[button];
             apps[app].notification = match task.notification {
                 Some(signal) => signal.notification(),
-                None => apps[app]
-                    .notification
-                    .or_else(|| taskbar.notifications.get(&task.identity).copied()),
+                None => taskbar
+                    .notifications
+                    .badges
+                    .get(&task.identity)
+                    .copied()
+                    .or(apps[app].notification),
             };
             assigned.push((button, app));
         }

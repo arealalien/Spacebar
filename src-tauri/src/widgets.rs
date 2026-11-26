@@ -76,12 +76,22 @@ pub(crate) enum Kind {
     Start,
     SpacebarStart,
     Folder,
+    WidgetGroup,
+    WidgetTray,
     App,
     Spacer,
     Divider,
 }
 
 impl Kind {
+    pub fn is_clock(self) -> bool {
+        matches!(self, Self::Clock | Self::ClockPlain | Self::ClockOutline | Self::ClockAnalog
+            | Self::ClockTwilight | Self::ClockFlip | Self::DayProgress)
+    }
+    pub fn is_widget_container(self) -> bool {
+        matches!(self, Self::WidgetGroup | Self::WidgetTray)
+    }
+
     pub fn supports_surface(self) -> bool {
         !matches!(
             self,
@@ -94,7 +104,7 @@ impl Kind {
     }
 
     pub fn supports_color(self) -> bool {
-        self.supports_size() && !matches!(self, Self::Apps | Self::Image)
+        self.supports_size() && !matches!(self, Self::Apps | Self::Image) && !self.is_widget_container()
     }
 
     fn color_channels(self) -> &'static [ColorChannel] {
@@ -180,6 +190,16 @@ pub struct Item {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     frame: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    no_padding: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    show_date: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    clock_format: Option<ClockFormat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    child_spacing: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    child_padding: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     spacer_size: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     size: Option<WidgetSize>,
@@ -197,6 +217,16 @@ pub struct Item {
     colors: BTreeMap<ColorChannel, String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     children: Vec<Item>,
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum ClockFormat {
+    System,
+    #[serde(rename = "12h")]
+    TwelveHour,
+    #[serde(rename = "24h")]
+    TwentyFourHour,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -218,6 +248,11 @@ impl Default for Layout {
                 icon: None,
                 background: None,
                 frame: None,
+                no_padding: None,
+                show_date: None,
+                clock_format: None,
+                child_spacing: None,
+                child_padding: None,
                 spacer_size: None,
                 size: None,
                 audio_speed: None,
@@ -232,11 +267,17 @@ impl Default for Layout {
     }
 }
 
+fn widget_entries(items: &[Item]) -> impl Iterator<Item = (&Item, Option<Kind>)> {
+    items.iter().flat_map(|item| {
+        std::iter::once((item, None)).chain(item.children.iter().flat_map(move |child| {
+            std::iter::once((child, Some(item.kind)))
+                .chain(child.children.iter().map(move |entry| (entry, Some(child.kind))))
+        }))
+    })
+}
+
 pub(crate) fn is_image_widget(items: &[Item], id: &str) -> bool {
-    items
-        .iter()
-        .flat_map(|item| std::iter::once(item).chain(&item.children))
-        .any(|item| item.kind == Kind::Image && item.id == id)
+    widget_entries(items).any(|(item, _)| item.kind == Kind::Image && item.id == id)
 }
 
 pub(crate) fn valid_color(color: &str) -> bool {
@@ -252,24 +293,31 @@ pub(crate) fn valid_layout(items: &[Item]) -> bool {
     let mut ids = HashSet::new();
     let mut kinds = HashSet::new();
     let mut apps = HashSet::new();
-    for (item, nested) in items.iter().flat_map(|item| {
-        std::iter::once((item, false)).chain(item.children.iter().map(|child| (child, true)))
-    }) {
+    for (item, parent) in widget_entries(items) {
         if item.id.is_empty() || item.id.len() > 80 || !ids.insert(&item.id) {
             return false;
         }
         if item.kind == Kind::Folder {
-            if nested || item.children.len() > 128 {
+            if parent.is_some_and(|kind| !kind.is_widget_container()) || item.children.len() > 128 {
+                return false;
+            }
+        } else if item.kind.is_widget_container() {
+            if parent.is_some() || item.children.len() > 64 {
                 return false;
             }
         } else if !item.children.is_empty() {
+            return false;
+        }
+        if item.child_spacing.is_some_and(|value| !item.kind.is_widget_container() || value > 32)
+            || item.child_padding.is_some_and(|value| !item.kind.is_widget_container() || value > 24)
+        {
             return false;
         }
         if item.kind == Kind::App {
             let Some(id) = item.app_id.as_deref() else {
                 return false;
             };
-            if !nested
+            if parent != Some(Kind::Folder)
                 || !apps.insert(id)
                 || item.icon.as_ref().is_some_and(|icon| {
                     icon.len() > 512 * 1024 || !icon.starts_with("data:image/png;base64,")
@@ -278,10 +326,10 @@ pub(crate) fn valid_layout(items: &[Item]) -> bool {
                 return false;
             }
         } else if matches!(item.kind, Kind::Spacer | Kind::Divider) {
-            if nested {
+            if parent == Some(Kind::Folder) {
                 return false;
             }
-        } else if !matches!(item.kind, Kind::Folder | Kind::ClockPlain | Kind::Image)
+        } else if !matches!(item.kind, Kind::Folder | Kind::WidgetGroup | Kind::WidgetTray | Kind::ClockPlain | Kind::Image)
             && !kinds.insert(item.kind)
         {
             return false;
@@ -293,6 +341,9 @@ pub(crate) fn valid_layout(items: &[Item]) -> bool {
             return false;
         }
         if item.size.is_some() && !item.kind.supports_size() {
+            return false;
+        }
+        if !item.kind.is_clock() && (item.show_date.is_some() || item.clock_format.is_some()) {
             return false;
         }
         if item
@@ -336,10 +387,7 @@ pub(crate) fn migrate_widget_items(items: &mut Vec<Item>) {
 
 impl Layout {
     pub(crate) fn uses_spacebar_start(&self) -> bool {
-        self.items
-            .iter()
-            .flat_map(|item| std::iter::once(item).chain(&item.children))
-            .any(|item| item.kind == Kind::SpacebarStart)
+        widget_entries(&self.items).any(|(item, _)| item.kind == Kind::SpacebarStart)
     }
 
     pub(crate) fn load_legacy(directory: &Path) -> Self {
@@ -448,6 +496,41 @@ mod layout_tests {
         assert_eq!(items[1].children[0].id, "drawing");
         assert_eq!(items[1].children[0].frame, Some(false));
         assert_eq!(items[2].id, "agenda");
+    }
+
+    #[test]
+    fn clock_options_round_trip_on_all_clock_widgets() {
+        let kinds = ["clock", "clock-plain", "clock-analog", "clock-twilight", "clock-flip", "day-progress"];
+        let stored = serde_json::json!(kinds.map(|kind| serde_json::json!({
+            "id": kind, "kind": kind, "showDate": false, "clockFormat": "24h"
+        })));
+        let items: Vec<Item> = serde_json::from_value(stored.clone()).unwrap();
+        assert!(valid_layout(&items));
+        assert_eq!(serde_json::to_value(items).unwrap(), stored);
+    }
+
+    #[test]
+    fn validates_inline_widgets_with_folders_and_preserves_container_options() {
+        let value = serde_json::json!([{
+            "id": "group", "kind": "widget-group", "childSpacing": 0, "childPadding": 12,
+            "children": [
+                { "id": "divider", "kind": "divider" },
+                { "id": "folder", "kind": "folder", "children": [
+                    { "id": "start", "kind": "spacebar-start" },
+                    { "id": "image", "kind": "image" },
+                    { "id": "app", "kind": "app", "appId": "app-id" }
+                ]}
+            ]
+        }, { "id": "tray", "kind": "widget-tray", "children": [{ "id": "tray-tool", "kind": "tray" }] }]);
+        let items = serde_json::from_value::<Vec<Item>>(value).unwrap();
+        assert!(valid_layout(&items));
+        assert!(is_image_widget(&items, "image"));
+        assert!(Layout { revision: 0, items: items.clone() }.uses_spacebar_start());
+        let mut saved = serde_json::to_value(items).unwrap();
+        assert_eq!(saved[0]["childSpacing"], 0);
+        assert_eq!(saved[0]["childPadding"], 12);
+        saved[0]["children"][0]["kind"] = serde_json::json!("widget-tray");
+        assert!(!valid_layout(&serde_json::from_value::<Vec<Item>>(saved).unwrap()));
     }
 
     #[test]
@@ -663,11 +746,8 @@ pub fn open_folder(
     if read_open_folder(app.state()).as_deref() == Some(&id) {
         return close_folder(app, folder);
     }
-    let exists = store
-        .widgets()?
-        .items
-        .iter()
-        .any(|item| item.id == id && item.kind == Kind::Folder);
+    let exists = widget_entries(&store.widgets()?.items)
+        .any(|(item, _)| item.id == id && item.kind == Kind::Folder);
     if !exists {
         return Err("This folder is no longer on the dock.".into());
     }
@@ -728,13 +808,8 @@ pub fn launch_folder_app(
     id: String,
     new_window: Option<bool>,
 ) -> Result<(), String> {
-    let entry = store
-        .widgets()?
-        .items
-        .iter()
-        .flat_map(|item| &item.children)
-        .find(|item| item.kind == Kind::App && item.id == id)
-        .cloned()
+    let entry = widget_entries(&store.widgets()?.items)
+        .find_map(|(item, _)| (item.kind == Kind::App && item.id == id).then(|| item.clone()))
         .ok_or("This app is no longer in the folder.")?;
     let app_id = entry.app_id.ok_or("This app could not be identified.")?;
     if app_id == apps::SETTINGS_APP_ID {

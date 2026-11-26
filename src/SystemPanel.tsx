@@ -2,8 +2,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { Bell, Settings2, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { Calendar } from './Calendar';
+import { useDockAppearance } from './dockAppearance';
 import { contrastingInk, defaults, type Settings } from './model';
-import { AgendaPanel, DrawingPad, QuickNote } from './PersonalPanels';
+import { AgendaPanel, QuickNote } from './PersonalPanels';
+import { DrawingPad } from './DrawingPad';
 import { QuickTasks, ScreenColors } from './UtilityPanels';
 import { PersonalGlyph, isPersonalWidget } from './PersonalWidgets';
 import { StartLauncher } from './StartLauncher';
@@ -24,6 +26,7 @@ const names: Record<PanelKind, string> = {
 export function SystemPanel() {
   const panel = useSurfacePayload<PanelKind>('system-panel-changed', 'read_system_panel');
   const settings = useSurfacePayload<Settings>('settings-changed', 'read_settings') ?? defaults;
+  const { tint, material, ...appearance } = useDockAppearance(settings, !!panel);
   const startBackdrop = useSurfacePayload<string>('start-backdrop-changed', 'read_start_backdrop');
   const content = useRef<HTMLElement>(null);
   const activePanel = useRef(panel);
@@ -58,9 +61,9 @@ export function SystemPanel() {
   const personal = isPersonalWidget(panel);
   const quick = panel === 'quick-settings' || panel === 'audio-output' || panel === 'microphone';
   const utility = panel === 'quick-tasks' || panel === 'color-picker';
-  return <main className={`system-panel${utility ? ' utility-panel' : ''}`} data-panel={panel} data-quick={quick || undefined} data-personal={personal || undefined} data-material={settings.material} data-edge={settings.edge}
+  return <main className={`system-panel${utility ? ' utility-panel' : ''}`} data-panel={panel} data-quick={quick || undefined} data-personal={personal || undefined} data-material={material} {...appearance} data-edge={settings.edge}
     role={utility ? 'dialog' : undefined} aria-labelledby="system-panel-title" tabIndex={-1} ref={content}
-    style={{ '--dock-tint': settings.tintColor, '--calendar-day-ink': settings.material === 'tinted' ? contrastingInk(settings.tintColor) : undefined } as CSSProperties}
+    style={{ '--dock-tint': tint, '--calendar-day-ink': material === 'tinted' ? contrastingInk(tint) : undefined } as CSSProperties}
     onKeyDown={(event) => { if (event.key === 'Escape') close(); }}>
     {settings.dockSnow && <SurfaceSnow key={panel} />}
     {(quick || panel === 'spacebar-start' || panel === 'tray') && startBackdrop && <img className="start-backdrop" src={startBackdrop} alt="" draggable={false} />}

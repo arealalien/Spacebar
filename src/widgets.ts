@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from 'react';
 import { desktop, normalizeHexColor, settingsStorageKey, type DockApp } from './model';
 import { browserWidgetsChanged, dockStorageKey, readBrowserDock, writeBrowserDock } from './dockStorage';
-import { isLayoutWidget, isStartWidget, repeatableWidget, type WidgetKind } from './widgetCatalog';
+import { isClockKind, isLayoutWidget, isStartWidget, isWidgetContainer, repeatableWidget, type WidgetKind } from './widgetCatalog';
 import type { ImageWidgetOptions } from './imageWidgetStorage';
 export { widgetNames, type WidgetKind } from './widgetCatalog';
 
@@ -17,6 +17,11 @@ export interface WidgetItem extends Partial<AudioVisualizerOptions> {
   icon?: string;
   background?: boolean;
   frame?: boolean;
+  noPadding?: boolean;
+  showDate?: boolean;
+  clockFormat?: ClockFormat;
+  childSpacing?: number;
+  childPadding?: number;
   spacerSize?: number;
   size?: WidgetSize;
   color?: string;
@@ -41,6 +46,7 @@ export function migrateWidgetItems(items: StoredWidgetItem[]): WidgetItem[] {
 }
 
 type AppearanceOption = 'background' | 'frame';
+export type ClockFormat = 'system' | '12h' | '24h';
 export type WidgetSize = 'small' | 'normal' | 'large';
 export interface AudioVisualizerOptions {
   audioAlignment: 'center' | 'bottom';
@@ -56,6 +62,22 @@ export const widgetScale = (size: WidgetSize | undefined) => size === 'small' ? 
 export const defaultSpacerSize = 32;
 export const minSpacerSize = 8;
 export const maxSpacerSize = 240;
+export const maxChildSpacing = 32;
+export const maxChildPadding = 24;
+
+export function containerLayout(item: WidgetItem) {
+  const tray = item.kind === 'widget-tray';
+  return { spacing: item.childSpacing ?? (tray ? 3 : 7), padding: item.childPadding ?? (tray ? 3 : 6), scale: tray ? .56 : 1 };
+}
+
+export function setContainerLayout(items: WidgetItem[], id: string, spacing: number, padding: number) {
+  if (!Number.isFinite(spacing) || !Number.isFinite(padding)) return items;
+  return updateWidget(items, id, (item) => isWidgetContainer(item.kind) ? {
+    ...item,
+    childSpacing: Math.round(Math.max(0, Math.min(maxChildSpacing, spacing))),
+    childPadding: Math.round(Math.max(0, Math.min(maxChildPadding, padding))),
+  } : item);
+}
 
 export function supportsWidgetSurface(kind: WidgetItem['kind']) {
   return !isStartWidget(kind) && !isLayoutWidget(kind) && kind !== 'image';
@@ -102,7 +124,7 @@ const singleColorOption: readonly WidgetColorOption[] = [{ key: 'accent', label:
 const visualizerColor: readonly WidgetColorOption[] = [{ key: 'accent', label: 'Wave color', defaultColor: '#d7e5ff' }];
 
 export function widgetColorOptions(kind: WidgetItem['kind']): readonly WidgetColorOption[] {
-  if (kind === 'app' || kind === 'apps' || kind === 'spacer' || kind === 'image') return [];
+  if (kind === 'app' || kind === 'apps' || kind === 'spacer' || kind === 'image' || isWidgetContainer(kind)) return [];
   if (kind === 'audio-visualizer') return visualizerColor;
   return multiColorOptions[kind] ?? singleColorOption;
 }
@@ -148,6 +170,18 @@ export function toggleWidgetSurface(items: WidgetItem[], id: string, option: App
   return updateWidget(items, id, (item) => supportsWidgetSurface(item.kind) ? { ...item, [option]: !hasWidgetSurface(item, option) } : item);
 }
 
+export function toggleWidgetPadding(items: WidgetItem[], id: string) {
+  return updateWidget(items, id, (item) => ({ ...item, noPadding: !item.noPadding }));
+}
+
+export function clockShowsDate(kind: string, showDate?: boolean) {
+  return showDate ?? kind === 'clock';
+}
+
+export function setClockOption<Key extends 'showDate' | 'clockFormat'>(items: WidgetItem[], id: string, key: Key, value: WidgetItem[Key]) {
+  return updateWidget(items, id, (item) => isClockKind(item.kind) && item[key] !== value ? { ...item, [key]: value } : item);
+}
+
 export function setWidgetSize(items: WidgetItem[], id: string, size: WidgetSize) {
   return updateWidget(items, id, (item) => supportsWidgetSize(item.kind) && (item.size ?? 'normal') !== size ? { ...item, size } : item);
 }
@@ -176,15 +210,20 @@ export function setAudioOption<K extends keyof AudioVisualizerOptions>(items: Wi
 }
 
 function updateWidget(items: WidgetItem[], id: string, update: (item: WidgetItem) => WidgetItem): WidgetItem[] {
-  const index = items.findIndex((item) => item.id === id || item.children?.some((child) => child.id === id));
-  if (index === -1) return items;
-  const item = items[index];
-  const children = item.id !== id && item.children ? updateWidget(item.children, id, update) : undefined;
-  const next = children ? (children === item.children ? item : { ...item, children }) : update(item);
-  if (next === item) return items;
-  const updated = items.slice();
-  updated[index] = next;
-  return updated;
+  let changed = false;
+  const next = items.map((item) => {
+    if (item.id === id) {
+      const updated = update(item);
+      changed ||= updated !== item;
+      return updated;
+    }
+    if (!item.children?.length) return item;
+    const children = updateWidget(item.children, id, update);
+    if (children === item.children) return item;
+    changed = true;
+    return { ...item, children };
+  });
+  return changed ? next : items;
 }
 
 export function resizeSpacer(items: WidgetItem[], id: string, size: number) {
@@ -215,7 +254,7 @@ export function dockPopupAnchor(element: HTMLElement) {
 }
 
 export interface WidgetLayout { revision: number; items: WidgetItem[] }
-export interface WidgetTarget { folder?: string; before?: string }
+export interface WidgetTarget { folder?: string; container?: string; before?: string }
 export type WidgetDragSource = { type: 'new'; kind: WidgetKind } | { type: 'item'; id: string }
   | { type: 'app'; app: Pick<DockApp, 'id' | 'name' | 'icon' | 'launchPath'> };
 export interface WidgetDrag extends WidgetTarget { source: WidgetDragSource; x: number; y: number; inside: boolean; finished: boolean; cancelled: boolean }
@@ -251,7 +290,7 @@ function currentLayout(): Promise<WidgetLayout> {
   return desktop ? invoke('read_widgets') : Promise.resolve(browserLayout());
 }
 
-export function allWidgets(items: WidgetItem[]) { return items.flatMap((item) => [item, ...(item.children ?? [])]); }
+export function allWidgets(items: WidgetItem[]): WidgetItem[] { return items.flatMap((item) => [item, ...allWidgets(item.children ?? [])]); }
 
 export function useWidgets() {
   const [items, setItems] = useState(initialWidgets);
@@ -307,9 +346,13 @@ async function saveWidgetEdit(edit: (items: WidgetItem[]) => WidgetItem[]) {
   throw new Error('The dock changed while editing. Try again.');
 }
 
-function without(items: WidgetItem[], id: string) {
-  return items.filter((item) => item.id !== id).map((item) => item.children?.some((child) => child.id === id)
-    ? { ...item, children: item.children.filter((child) => child.id !== id) } : item);
+function without(items: WidgetItem[], id: string): WidgetItem[] {
+  const next = items.filter((item) => item.id !== id).map((item) => {
+    if (!item.children?.length) return item;
+    const children = without(item.children, id);
+    return children === item.children ? item : { ...item, children };
+  });
+  return next.length === items.length && next.every((item, index) => item === items[index]) ? items : next;
 }
 
 function insert(items: WidgetItem[], item: WidgetItem, before?: string) {
@@ -317,14 +360,14 @@ function insert(items: WidgetItem[], item: WidgetItem, before?: string) {
   return index < 0 ? [...items, item] : [...items.slice(0, index), item, ...items.slice(index)];
 }
 
-export function placeWidget(items: WidgetItem[], source: WidgetDragSource, { folder, before }: WidgetTarget = {}): WidgetItem[] {
+export function placeWidget(items: WidgetItem[], source: WidgetDragSource, { folder, container, before }: WidgetTarget = {}): WidgetItem[] {
   const existing = allWidgets(items);
-  const target = folder ? items.find((item) => item.id === folder && item.kind === 'folder') : undefined;
-  if (folder && !target) return items;
+  const target = existing.find((item) => (item.id === folder && item.kind === 'folder') || (item.id === container && isWidgetContainer(item.kind)));
+  if ((folder || container) && !target) return items;
   let entry: WidgetItem | undefined;
   if (source.type === 'item') entry = existing.find((item) => item.id === source.id);
   if (source.type === 'app') {
-    if (!target) return items;
+    if (!folder) return items;
     const { id: appId, name, icon, launchPath } = source.app;
     entry = existing.find((item) => item.kind === 'app' && item.appId === appId) ?? { id: crypto.randomUUID(), kind: 'app', appId, name, icon, launchPath };
   }
@@ -334,20 +377,28 @@ export function placeWidget(items: WidgetItem[], source: WidgetDragSource, { fol
       : (repeatableWidget(source.kind) ? undefined : existing.find((item) => item.kind === source.kind))
         ?? { id: crypto.randomUUID(), kind: source.kind, size: supportsWidgetSize(source.kind) ? 'normal' : undefined };
   }
-  if (!entry || before === entry.id || (target && (entry.kind === 'folder' || isLayoutWidget(entry.kind)))) return items;
+  if (!entry || before === entry.id || (target && (
+    isWidgetContainer(entry.kind) || (folder && (entry.kind === 'folder' || isLayoutWidget(entry.kind)))
+    || (container && entry.kind === 'app')
+  ))) return items;
   const next = without(items, entry.id);
-  if (target) return next.map((item) => item.id === target.id ? { ...item, children: insert(item.children ?? [], entry, before) } : item);
+  if (target) return updateWidget(next, target.id, (item) => ({ ...item, children: insert(item.children ?? [], entry, before) }));
   return entry.kind === 'app' ? next : insert(next, entry, before);
 }
 
 export function removeWidget(items: WidgetItem[], id: string): WidgetItem[] {
   const entry = allWidgets(items).find((item) => item.id === id);
   if (!entry) return items;
-  return entry.kind === 'folder' ? items.flatMap((item) => item.id === id ? (item.children ?? []).filter((child) => child.kind !== 'app') : [item]) : without(items, id);
+  if (isWidgetContainer(entry.kind)) return items.flatMap((item) => item.id === id ? item.children ?? [] : [item]);
+  if (entry.kind !== 'folder') return without(items, id);
+  const parent = items.find((item) => item.children?.some((child) => child.id === id));
+  if (!parent) return items.flatMap((item) => item.id === id ? (item.children ?? []).filter((child) => child.kind !== 'app') : [item]);
+  return updateWidget(items, parent.id, (item) => ({ ...item, children: (item.children ?? []).flatMap((child) =>
+    child.id === id ? (child.children ?? []).filter((entry) => entry.kind !== 'app') : [child]) }));
 }
 
 export function renameFolder(items: WidgetItem[], id: string, name: string) {
-  return items.map((item) => item.id === id && item.kind === 'folder' ? { ...item, name: name.trim().slice(0, 48) || 'Folder' } : item);
+  return updateWidget(items, id, (item) => item.kind === 'folder' ? { ...item, name: name.trim().slice(0, 48) || 'Folder' } : item);
 }
 
 export function rowApps(apps: DockApp[], items: WidgetItem[]) {

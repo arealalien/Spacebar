@@ -54,7 +54,8 @@ export interface Settings {
   revealDuration: number;
   revealAnimation: 'easing' | 'bounce';
   bounceAmount: number;
-  material: 'tinted' | 'midnight' | 'clear';
+  material: 'tinted' | 'midnight' | 'clear' | 'spotify';
+  spotifyFrosted: boolean;
   dockSnow: boolean;
   tintColor: string;
   accent: keyof typeof accents;
@@ -83,7 +84,7 @@ export const defaults: Settings = {
   magnify: true, names: true, previews: true, previewDisplay: 'window', indicators: true, notificationBadges: 'dot',
   hideSettingsIcon: false, hideInFullscreen: true, autoHide: false, replaceTaskbar: true, replaceWindowsStart: false,
   revealDuration: 260, revealAnimation: 'easing', bounceAmount: 35,
-  material: 'tinted', tintColor: '#c8b6ff', dockSnow: false,
+  material: 'tinted', spotifyFrosted: true, tintColor: '#c8b6ff', dockSnow: false,
   accent: 'purple',
   appIconShape: 'original', appIconBackground: 'transparent', appIconColor: '#30343e',
   appIconClickEffect: 'none', appIconClickSpeed: 100,
@@ -146,7 +147,7 @@ export function browserSettings(): Settings {
 
 export function normalizeSettings(value: unknown): Settings {
   const stored = typeof value === 'object' && value ? value as Record<string, unknown> : {};
-  const material = stored.material === 'midnight' || stored.material === 'clear' ? stored.material : 'tinted';
+  const material = stored.material === 'midnight' || stored.material === 'clear' || stored.material === 'spotify' ? stored.material : 'tinted';
   const oldAccent = typeof stored.accent === 'string' && Object.hasOwn(legacyAccents, stored.accent)
     ? legacyAccents[stored.accent as keyof typeof legacyAccents] : defaults.accent;
   const option = <Key extends string>(choices: Record<Key, unknown>, saved: unknown, fallback: Key): Key =>
@@ -157,6 +158,7 @@ export function normalizeSettings(value: unknown): Settings {
   const padding = stored.padding;
   return {
     ...defaults, ...preferences, material,
+    spotifyFrosted: stored.spotifyFrosted !== false,
     dockSnow: stored.dockSnow === true,
     hideInFullscreen: stored.hideInFullscreen !== false,
     padding: typeof padding === 'number' && Number.isFinite(padding)

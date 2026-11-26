@@ -234,6 +234,11 @@ fn read_surface(
                 .into_iter()
                 .filter_map(Result::ok)
                 .find_map(|value| BadgeSignal::from_description(&value.to_string()))
+                .or_else(|| {
+                    // Some Explorer versions put the badge in the accessible button name.
+                    let (_, status) = name.split_once([',', '(', '–', '—'])?;
+                    BadgeSignal::from_description(status)
+                })
             } else {
                 None
             };
@@ -273,16 +278,20 @@ pub fn watch(app: AppHandle) {
                 CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
                     .ok()
             });
+        let mut badges_enabled_at = None;
         loop {
-            let badges = app.state::<DockStore>().current().notification_badges
-                != NotificationBadges::None;
+            let badges =
+                app.state::<DockStore>().current().notification_badges != NotificationBadges::None;
+            let notifications = if badges {
+                let since = *badges_enabled_at.get_or_insert_with(notifications::current_filetime);
+                notifications::read(since).unwrap_or_default()
+            } else {
+                badges_enabled_at = None;
+                Notifications::default()
+            };
             let buttons = automation
                 .as_ref()
                 .and_then(|automation| read_buttons(automation, badges).ok())
-                .unwrap_or_default();
-            let notifications = badges
-                .then(notifications::read)
-                .flatten()
                 .unwrap_or_default();
             let favorites = read_favorites();
             let order = app.state::<TaskbarOrder>();

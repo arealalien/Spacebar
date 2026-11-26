@@ -1,9 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
-import { AudioLines, Clock3, CloudSun, Folder, Image as ImageIcon, Music2 } from 'lucide-react';
+import { AudioLines, Bell, Clock3, CloudSun, Folder, Image as ImageIcon, Music2, Settings2 } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { DockAppIcon } from './AppIcon';
 import { demoApps, type DockApp } from './model';
-import { dockPopupAnchor, type WidgetItem, type WidgetKind } from './widgets';
+import { clockShowsDate, dockPopupAnchor, type ClockFormat, type WidgetItem, type WidgetKind } from './widgets';
+import { useHoverPopup } from './HoverPopup';
 import { isClockKind, isSpotifyKind, isStartWidget, isWeatherKind, widgetCatalog, type ClockKind } from './widgetCatalog';
 import { SystemWidget, SystemWidgetGlyph } from './SystemWidgets';
 import { SpotifyFace } from './SpotifyWidgets';
@@ -12,8 +13,14 @@ import { AudioVisualizer } from './AudioVisualizer';
 import { WeatherWidget } from './WeatherWidgets';
 import { ImageWidgetFace } from './ImageWidget';
 
-const timeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+const timeFormats = {
+  system: new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }),
+  '12h': new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h12' }),
+  '24h': new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }),
+} satisfies Record<ClockFormat, Intl.DateTimeFormat>;
 const dateFormat = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+
+const compactDate = new Intl.DateTimeFormat(undefined, { month: 'numeric', day: 'numeric' });
 
 function FlipTile({ value, previous }: { value: string; previous: string }) {
   const tile = useRef<HTMLSpanElement>(null);
@@ -58,65 +65,93 @@ function FlipTile({ value, previous }: { value: string; previous: string }) {
   </span>;
 }
 
-function ClockFace({ kind }: { kind: ClockKind }) {
+function ClockFace({ kind, item, interactive = false, onError }: {
+  kind: ClockKind; item?: WidgetItem; interactive?: boolean; onError?: (error: unknown) => void;
+}) {
   const [{ now, previous }, setTimes] = useState(() => {
     const now = new Date();
     return { now, previous: now };
   });
+  const face = useRef<HTMLElement | null>(null);
+  const hoverTimer = useRef<number>(undefined);
+  const open = useHoverPopup(face, interactive ? item?.id : undefined, 'calendar', onError);
+  function cancelHover() { window.clearTimeout(hoverTimer.current); }
   useEffect(() => {
     const timer = window.setInterval(() => {
       const next = new Date();
       setTimes(({ now }) => ({ now: next, previous: now }));
     }, 1000);
-    return () => window.clearInterval(timer);
+    return () => { window.clearInterval(timer); cancelHover(); };
   }, []);
+  const format = item?.clockFormat ?? 'system';
+  const timeFormat = timeFormats[format];
   const time = timeFormat.format(now);
   const dateTime = now.toISOString();
-  if (kind === 'day-progress') {
-    const hour = now.getHours();
-    const progress = Math.floor(100 * (hour * 60 + now.getMinutes()) / 1440);
-    return <div className="widget-face day-face" role="meter" aria-label="Day progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
-      <div className="day-dots" aria-hidden="true">{Array.from({ length: 24 }, (_, index) =>
-        <i key={index} data-hour={index < hour ? 'elapsed' : index === hour ? 'current' : 'ahead'} />)}</div>
-      <div className="day-caption" aria-hidden="true"><span>Day</span><strong>{progress}%</strong></div>
-    </div>;
-  }
-  if (kind === 'clock-flip') {
-    const parts = timeFormat.formatToParts(now);
-    const lastParts = timeFormat.formatToParts(previous);
-    const part = (type: Intl.DateTimeFormatPartTypes, reading = parts) => reading.find((part) => part.type === type)?.value ?? '';
-    const dayPeriod = part('dayPeriod');
-    return <div className="widget-face flip-face"><time dateTime={dateTime} aria-label={time}>
-      <FlipTile value={part('hour')} previous={part('hour', lastParts)} />
-      <FlipTile value={part('minute')} previous={part('minute', lastParts)} />
-      {dayPeriod && <span className="flip-period" aria-hidden="true">{dayPeriod}</span>}
-    </time></div>;
-  }
-  if (kind === 'clock-analog' || kind === 'clock-twilight') {
-    const hour = (now.getHours() % 12 + now.getMinutes() / 60) * 30;
-    const minute = (now.getMinutes() + now.getSeconds() / 60) * 6;
-    return <div className={`widget-face analog-face ${kind}`} title={time}>
-      <time dateTime={dateTime} aria-label={time}>
+  const hour = now.getHours();
+  const progress = Math.floor(100 * (hour * 60 + now.getMinutes()) / 1440);
+  const analog = kind === 'clock-analog' || kind === 'clock-twilight';
+  const showDate = clockShowsDate(kind, item?.showDate);
+  const showReadout = analog && format !== 'system';
+  const date = (analog || kind === 'day-progress' ? compactDate : dateFormat).format(now);
+  const dateCaption = showDate && <span className="clock-date" title={dateFormat.format(now)}>{date}</span>;
+  const Face = interactive ? 'button' : 'span';
+  const className = {
+    clock: 'clock-face', 'clock-plain': 'digital-face', 'clock-flip': 'flip-face',
+    'clock-analog': 'analog-face clock-analog', 'clock-twilight': 'analog-face clock-twilight', 'day-progress': 'day-face',
+  }[kind];
+  const parts = kind === 'clock-flip' ? timeFormat.formatToParts(now) : [];
+  const lastParts = kind === 'clock-flip' ? timeFormat.formatToParts(previous) : [];
+  const part = (type: Intl.DateTimeFormatPartTypes, reading = parts) => reading.find((entry) => entry.type === type)?.value;
+  const label = [time, showDate ? dateFormat.format(now) : undefined, kind === 'day-progress' ? `Day progress ${progress}%` : undefined]
+    .filter(Boolean).join(', ');
+
+  return <Face className={`widget-face clock-control ${className}`} data-clock-caption={showDate || showReadout || undefined}
+    ref={(node) => { face.current = node; }} title={label} {...(interactive ? {
+      type: 'button',
+      'aria-label': `Open calendar, ${label}`,
+      'aria-haspopup': 'dialog',
+      onPointerEnter(event: React.PointerEvent<HTMLElement>) {
+        if (event.pointerType === 'touch') return;
+        const element = event.currentTarget;
+        hoverTimer.current = window.setTimeout(() => { if (element.isConnected) open(element); }, 200);
+      },
+      onPointerLeave: cancelHover,
+      onPointerDown: cancelHover,
+      onClick(event: React.MouseEvent<HTMLElement>) {
+        cancelHover();
+        open(event.currentTarget, true, true);
+      },
+    } : {})}>
+    {kind === 'day-progress' ? <>
+      <span className="day-dots" aria-hidden="true">{Array.from({ length: 24 }, (_, index) =>
+        <i key={index} data-hour={index < hour ? 'elapsed' : index === hour ? 'current' : 'ahead'} />)}</span>
+      <span className="day-caption">
+        {format === 'system' ? <span>Day</span> : <time dateTime={dateTime}>{time}</time>}<strong>{progress}%</strong>
+      </span>
+    </> : kind === 'clock-flip' ? <time dateTime={dateTime} aria-label={time}>
+      <FlipTile value={part('hour') ?? ''} previous={part('hour', lastParts) ?? ''} />
+      <FlipTile value={part('minute') ?? ''} previous={part('minute', lastParts) ?? ''} />
+      {part('dayPeriod') && <span className="flip-period" aria-hidden="true">{part('dayPeriod')}</span>}
+    </time> : analog ? <>
+      <time className="clock-analog-time" dateTime={dateTime} aria-label={time}>
         <span className="analog-dial" aria-hidden="true">
           {Array.from({ length: 12 }, (_, index) => <i key={index} className="clock-tick" data-major={index % 3 === 0} style={{ rotate: index * 30 + 'deg' }} />)}
-          <span className="analog-hand hour-hand" style={{ rotate: hour + 'deg' }} />
-          <span className="analog-hand minute-hand" style={{ rotate: minute + 'deg' }} />
+          <span className="analog-hand hour-hand" style={{ rotate: (hour % 12 + now.getMinutes() / 60) * 30 + 'deg' }} />
+          <span className="analog-hand minute-hand" style={{ rotate: (now.getMinutes() + now.getSeconds() / 60) * 6 + 'deg' }} />
           <span className="analog-hand second-hand" style={{ rotate: now.getSeconds() * 6 + 'deg' }} />
           <span className="analog-hub" />
         </span>
       </time>
-    </div>;
-  }
-  if (kind === 'clock-plain') return <div className="widget-face digital-face"><time dateTime={dateTime}>{time}</time></div>;
-  return <div className="widget-face clock-face">
-    <div><time dateTime={dateTime}>{time}</time><span>{dateFormat.format(now)}</span></div>
-  </div>;
+      {showReadout && <span className="clock-readout">{time}</span>}
+    </> : <time dateTime={dateTime}>{time}</time>}
+    {dateCaption}
+  </Face>;
 }
 
 export function WindowsMark() { return <span className="windows-mark" aria-hidden="true"><i /><i /><i /><i /></span>; }
 
 export function WidgetSpecimen({ kind, apps = demoApps, item, live = false }: { kind: WidgetKind; apps?: DockApp[]; item?: WidgetItem; live?: boolean }) {
-  if (isClockKind(kind)) return <ClockFace kind={kind} />;
+  if (isClockKind(kind)) return <ClockFace kind={kind} item={item} />;
   if (isSpotifyKind(kind)) return <SpotifyFace kind={kind} specimen live={live} />;
   if (isWeatherKind(kind)) return <WeatherWidget kind={kind} specimen />;
   if (isPersonalWidget(kind)) return <PersonalWidget kind={kind} specimen />;
@@ -127,6 +162,9 @@ export function WidgetSpecimen({ kind, apps = demoApps, item, live = false }: { 
     case 'spacer': return <span className="layout-face spacer-face" aria-hidden="true" />;
     case 'divider': return <span className="layout-face divider-face" aria-hidden="true" />;
     case 'folder': return <span className="widget-face folder-face"><FolderContents item={item} apps={apps} /></span>;
+    case 'widget-group': case 'widget-tray': return <span className="widget-face widget-container-specimen" data-compact={kind === 'widget-tray'}>
+      <span><Clock3 /></span><span><Bell /></span><span><Settings2 /></span>
+    </span>;
     case 'apps': return <div className="widget-face apps-face">{apps.map((app) => <span key={app.id}><DockAppIcon app={app} /></span>)}</div>;
     default: return <SystemWidget kind={kind} specimen live={live} />;
   }
@@ -152,7 +190,7 @@ export function WidgetFace({ item, apps, specimen = false, active = true, onFold
   onFolder?: (button: HTMLButtonElement) => void;
   onError: (error: unknown) => void;
 }) {
-  if (isClockKind(item.kind)) return <ClockFace kind={item.kind} />;
+  if (isClockKind(item.kind)) return <ClockFace kind={item.kind} item={item} interactive={!specimen && active} onError={onError} />;
   if (isSpotifyKind(item.kind)) return <SpotifyFace kind={item.kind} widget={item.id} specimen={specimen} onError={onError} />;
   if (isWeatherKind(item.kind)) return <WeatherWidget kind={item.kind} widget={item.id} specimen={specimen} onError={onError} />;
   if (isPersonalWidget(item.kind)) return <PersonalWidget kind={item.kind} specimen={specimen} onError={onError} />;
@@ -168,7 +206,7 @@ export function WidgetFace({ item, apps, specimen = false, active = true, onFold
         <FolderContents item={item} apps={apps} />
       </button>;
     }
-    case 'app': case 'apps': return null;
+    case 'app': case 'apps': case 'widget-group': case 'widget-tray': return null;
     case 'spacer': return <span className="layout-face spacer-face" aria-hidden="true" />;
     case 'divider': return <span className="layout-face divider-face" aria-hidden="true" />;
     default: return <SystemWidget kind={item.kind} specimen={specimen} live={specimen} onError={onError} />;

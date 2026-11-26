@@ -492,7 +492,7 @@ mod tests {
         data.settings.padding = 18;
         data.widgets.items.push(
             serde_json::from_value(serde_json::json!({
-                "id": "clock", "kind": "clock", "size": "small", "color": "#55aaff"
+                "id": "clock", "kind": "clock", "size": "small", "color": "#55aaff", "noPadding": true
             }))
             .unwrap(),
         );
@@ -516,10 +516,9 @@ mod tests {
         assert!(data.settings.edge == DockEdge::Left);
         assert_eq!(data.settings.padding, 18);
         assert_eq!(data.widgets.revision, 10);
-        assert_eq!(
-            serde_json::to_value(&data.widgets.items).unwrap()[1]["color"],
-            "#55aaff"
-        );
+        let widgets = serde_json::to_value(&data.widgets.items).unwrap();
+        assert_eq!(widgets[1]["color"], "#55aaff");
+        assert_eq!(widgets[1]["noPadding"], true);
         assert_eq!(data.app_order, ["browser", "editor"]);
         data.settings.edge = DockEdge::Right;
         data.edit_saved(SavedDockEdit::Update { id: id.clone() })

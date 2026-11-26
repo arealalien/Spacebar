@@ -8,7 +8,8 @@ import { SurfaceSnow } from './SurfaceSnow';
 import { WidgetFace } from './WidgetFaces';
 import { useDockApps } from './useDockApps';
 import { useSurfacePayload } from './useSurfacePayload';
-import { editWidgets, placeWidget, renameFolder, rowApps, useWidgetDrag, useWidgets, widgetAppearance, widgetColorStyle, widgetNames, widgetScale, type WidgetItem, type WidgetKind } from './widgets';
+import { useDockAppearance } from './dockAppearance';
+import { allWidgets, editWidgets, placeWidget, renameFolder, rowApps, useWidgetDrag, useWidgets, widgetAppearance, widgetColorStyle, widgetNames, widgetScale, type WidgetItem, type WidgetKind } from './widgets';
 import { defaults, type DockApp, type Settings } from './model';
 import { widgetCatalog } from './widgetCatalog';
 
@@ -59,7 +60,8 @@ export function FolderPanel() {
   const { items } = useWidgets();
   const { apps } = useDockApps(!!id);
   const settings = useSurfacePayload<Settings>('settings-changed', 'read_settings') ?? defaults;
-  const folder = items.find((item) => item.id === id && item.kind === 'folder');
+  const { tint, material, ...appearance } = useDockAppearance(settings, !!id);
+  const folder = allWidgets(items).find((item) => item.id === id && item.kind === 'folder');
   const children = folder?.children ?? [];
   const grouped = new Set(children.filter((item) => item.kind === 'app').map((item) => item.appId));
   const candidates = apps.filter((app) => !grouped.has(app.id) && app.name.toLowerCase().includes(query.trim().toLowerCase()));
@@ -85,7 +87,7 @@ export function FolderPanel() {
     if (id && name.trim() !== (folder?.name ?? 'Folder')) void editWidgets((items) => renameFolder(items, id, name)).catch(report);
   }
 
-  return <main className="folder-panel" data-material={settings.material} style={{ ...appIconStyle(settings), '--dock-tint': settings.tintColor } as CSSProperties} onKeyDown={(event) => {
+  return <main className="folder-panel" data-material={material} {...appearance} style={{ ...appIconStyle(settings), '--dock-tint': tint } as CSSProperties} onKeyDown={(event) => {
     if (event.key === 'Escape') void invoke('close_folder').catch(report);
   }}>
     {id && settings.dockSnow && <SurfaceSnow />}

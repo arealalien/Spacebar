@@ -47,7 +47,7 @@ export function sampleSpotifyArtwork(image: HTMLImageElement): SpotifyArtworkCol
     const coverage = Math.sqrt(count);
     const darkScore = coverage * (1 - lightness) ** 2;
     const brightScore = coverage * (.2 + 5 * chroma) * (.25 + lightness);
-    const color = `rgb(${Math.round(red / count)} ${Math.round(green / count)} ${Math.round(blue / count)})`;
+    const color = '#' + [red, green, blue].map((channel) => Math.round(channel / count).toString(16).padStart(2, '0')).join('');
     if (darkScore > dark.score) dark = { color, score: darkScore };
     if (brightScore > bright.score) bright = { color, score: brightScore };
   }

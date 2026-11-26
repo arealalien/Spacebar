@@ -68,12 +68,13 @@ function moveAppFocus(event: KeyboardEvent<HTMLDivElement>) {
   nearby[0]?.button.focus();
 }
 
-function AppsPane({ layout, layoutControl, busy, launching, onLaunch }: {
+function AppsPane({ layout, layoutControl, busy, launching, onLaunch, onAppMenu }: {
   layout: StartPreferences['appLayout'];
   layoutControl: ReactNode;
   busy: boolean;
   launching?: string;
   onLaunch: (id: string) => void;
+  onAppMenu: (id: string, x: number, y: number) => void;
 }) {
   const { value: apps, error, retry } = useStartResource<StartApp[]>('read_start_apps');
   const [query, setQuery] = useState('');
@@ -129,7 +130,18 @@ function AppsPane({ layout, layoutControl, busy, launching, onLaunch }: {
           <ul className="start-app-items">{entries.map((app) => {
             const opening = launching === app.id;
             return <li key={app.id}><button type="button" data-start-app data-launching={opening || undefined}
-              aria-busy={opening || undefined} disabled={busy} title={app.name} onClick={() => onLaunch(app.id)}>
+              aria-busy={opening || undefined} aria-haspopup="menu" disabled={busy} title={app.name} onClick={() => onLaunch(app.id)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.currentTarget.focus({ preventScroll: true });
+                onAppMenu(app.id, event.clientX, event.clientY);
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+                event.preventDefault();
+                const { left, bottom } = event.currentTarget.getBoundingClientRect();
+                onAppMenu(app.id, left, bottom);
+              }}>
               <span className="start-app-icon" aria-hidden="true"><AppIcon app={app} /></span>
               <span className="start-app-name">{app.name}</span>
               {opening && <LoaderCircle className="start-app-spinner" size={15} aria-hidden="true" />}
@@ -149,6 +161,7 @@ export function StartLauncher({ onClose, onError }: { onClose: () => void; onErr
   const [powerOpen, setPowerOpen] = useState(false);
   const [confirm, setConfirm] = useState<PowerAction>();
   const [pending, setPending] = useState<{ app?: string }>();
+  const appMenuOpen = useRef(false);
 
   async function run(command: string, args: Record<string, unknown>, app?: string) {
     if (pending) return;
@@ -159,6 +172,17 @@ export function StartLauncher({ onClose, onError }: { onClose: () => void; onErr
   }
 
   function launch(id: string) { void run('launch_start_app', { id }, id); }
+  async function openAppMenu(id: string, x: number, y: number) {
+    if (pending || appMenuOpen.current) return;
+    appMenuOpen.current = true;
+    try {
+      await invoke('open_start_app_menu', { id, anchor: { left: x, right: x, top: y, bottom: y } });
+    } catch (error) {
+      onError(error);
+    } finally {
+      appMenuOpen.current = false;
+    }
+  }
   function action(action: StartAction, confirmed = false) { void run('start_action', { action, confirmed }); }
 
   async function changeLayout(appLayout: StartPreferences['appLayout']) {
@@ -185,7 +209,7 @@ export function StartLauncher({ onClose, onError }: { onClose: () => void; onErr
       <button type="button" aria-pressed={pane === 'widgets'} onClick={() => setPane('widgets')}>Widgets</button>
     </div>
     <div className="start-workspace" data-pane={pane}>
-      <AppsPane layout={preferences?.appLayout ?? 'list'} busy={!!pending} launching={pending?.app} onLaunch={launch}
+      <AppsPane layout={preferences?.appLayout ?? 'list'} busy={!!pending} launching={pending?.app} onLaunch={launch} onAppMenu={openAppMenu}
         layoutControl={configuration.error && !preferences
           ? <button type="button" className="start-layout-retry" title={configuration.error} onClick={configuration.retry}>Retry layout</button>
           : <div className="start-layout-switch" role="group" aria-label="App layout" aria-busy={saving}>
